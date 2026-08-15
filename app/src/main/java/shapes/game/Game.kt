@@ -9,7 +9,9 @@ import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
 import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.core.content.res.ResourcesCompat
 import kotlin.math.ceil
+import kotlin.random.Random
 
 const val CELLS_COUNT = 15
 const val CELL_PADDING_FRACTION = 0.08f
@@ -17,7 +19,35 @@ const val PLAYGROUND_PADDING_FRACTION = 0.01f
 const val DRAG_SENSITIVITY = 2f
 
 val shapes: Array<Array<Coords>> = arrayOf(
-    arrayOf(Coords(1, 1))
+    // 1x1
+    arrayOf(Coords(1, 1)),
+    // 1x2 horizontal domino
+    arrayOf(Coords(1, 1), Coords(2, 1)),
+    // 2x1 vertical domino
+    arrayOf(Coords(1, 1), Coords(1, 2)),
+    // 2x2 square
+    arrayOf(
+        Coords(1, 1), Coords(2, 1),
+        Coords(1, 2), Coords(2, 2),
+    ),
+    // 1x3 horizontal bar
+    arrayOf(Coords(0, 1), Coords(1, 1), Coords(2, 1)),
+    // 3x1 vertical bar
+    arrayOf(Coords(1, 0), Coords(1, 1), Coords(1, 2)),
+    // 2x2 L triomino
+    arrayOf(
+        Coords(1, 1),
+        Coords(1, 2), Coords(2, 2),
+    ),
+    // 3x2 T tetromino
+    arrayOf(
+        Coords(0, 1), Coords(1, 1), Coords(2, 1),
+        Coords(1, 2),
+    ),
+    // 1x4 horizontal bar
+    arrayOf(Coords(0, 2), Coords(1, 2), Coords(2, 2), Coords(3, 2)),
+    // 4x1 vertical bar
+    arrayOf(Coords(2, 0), Coords(2, 1), Coords(2, 2), Coords(2, 3)),
 )
 
 data class Rect(
@@ -83,7 +113,9 @@ class CountdownText(val paint: Paint, context: Context) {
             opacity = 1f - 1f * dt
         }
 
+        paint.reset()
         paint.textSize = textSize
+        paint.typeface = AppFont.bold
         val textWidth = paint.measureText(text)
         textX = pgRect.x + (pgRect.width - textWidth) / 2
         textY = pgRect.y + textSize + (pgRect.height - textSize) / 2
@@ -95,7 +127,7 @@ class CountdownText(val paint: Paint, context: Context) {
         paint.reset()
         paint.color = Color.argb((opacity * 255).toInt(), 255, 255, 255)
         paint.textSize = textSize
-        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        paint.typeface = AppFont.bold
         canvas.drawText(text, textX, textY, paint)
     }
 }
@@ -127,6 +159,33 @@ class CurrentShape(
             }
         }
     }
+
+    fun checkOverlap(cells: Array<Boolean>) {
+        overlapping = false
+        for (cellCoords in cells()) {
+            val idx = cellCoords.col + cellCoords.row * CELLS_COUNT
+            if (cells[idx]) {
+                overlapping = true
+                break
+            }
+        }
+    }
+}
+
+class ShapesBag {
+    var current = -1
+    val indexes = IntArray(shapes.size) { it }
+
+    fun next(): Int {
+        if (current == indexes.size || current == -1) {
+            indexes.shuffle()
+            current = 0
+        }
+
+        val c = indexes[current]
+        current += 1
+        return c
+    }
 }
 
 class GameView(context: Context) : View(context) {
@@ -143,6 +202,7 @@ class GameView(context: Context) : View(context) {
     var cellSize = 0f
     var cellPadding = 0f
     val cells = Array(CELLS_COUNT * CELLS_COUNT) { false }
+    val shapesBag = ShapesBag()
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -162,9 +222,9 @@ class GameView(context: Context) : View(context) {
             GameState.Countdown -> {
                 // if (countdownText.update(elapsedTime, pgRect)) {
                 state = GameState.Placing
-                currentShape = CurrentShape(0)
+                currentShape = CurrentShape(shapesBag.next())
+                currentShape.checkOverlap(cells)
                 // }
-
             }
 
             GameState.Placing -> {
@@ -178,7 +238,6 @@ class GameView(context: Context) : View(context) {
                                 val idx = cellCoords.col + cellCoords.row * CELLS_COUNT
                                 cells[idx] = true
                             }
-                            currentShape = CurrentShape(0)
 
                             // delete filled
                             val filledRows = BooleanArray(CELLS_COUNT) { false }
@@ -228,7 +287,12 @@ class GameView(context: Context) : View(context) {
                                         cells[idx] = false
                                     }
                                 }
+
                             }
+
+                            // new shape
+                            currentShape = CurrentShape(shapesBag.next())
+                            currentShape.checkOverlap(cells)
                         } else {
                             currentShape.coordsPrev = currentShape.coords.copy()
                         }
@@ -256,16 +320,7 @@ class GameView(context: Context) : View(context) {
                         if (maxRow >= CELLS_COUNT) newCoords.row -= (maxRow - CELLS_COUNT + 1)
 
                         currentShape.coords = newCoords
-
-                        var overlapping = false
-                        for (cellCoords in currentShape.cells()) {
-                            val idx = cellCoords.col + cellCoords.row * CELLS_COUNT
-                            if (cells[idx]) {
-                                overlapping = true
-                                break
-                            }
-                        }
-                        currentShape.overlapping = overlapping
+                        currentShape.checkOverlap(cells)
                     }
                 }
             }
@@ -283,7 +338,7 @@ class GameView(context: Context) : View(context) {
         fun renderCell(coords: Coords) {
             val (cellx, celly) = coordsToPos(coords)
             val p = cellPadding
-            val r = dp(6f) - p
+            val r = dp(RADIUS) - p
             canvas.drawRoundRect(
                 cellx + p, celly + p, cellx + cellSize - p, celly + cellSize - p,
                 r, r,
@@ -292,7 +347,7 @@ class GameView(context: Context) : View(context) {
         }
 
         paint.color = Color.BLACK
-        canvas.drawRoundRect(pgRect.rectf, dp(6f), dp(6f), paint)
+        canvas.drawRoundRect(pgRect.rectf, dp(RADIUS), dp(RADIUS), paint)
 
         run { // draw placed cells
             paint.reset()
