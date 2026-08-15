@@ -188,7 +188,7 @@ class ShapesBag {
     }
 }
 
-class GameView(context: Context) : View(context) {
+class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(context) {
     var running = false
     var lastFrameTime = 0L
     var elapsedTime = 0f
@@ -203,6 +203,11 @@ class GameView(context: Context) : View(context) {
     var cellPadding = 0f
     val cells = Array(CELLS_COUNT * CELLS_COUNT) { false }
     val shapesBag = ShapesBag()
+    var score = 0
+        set(value) {
+            field = value
+            onScoreChange(value)
+        }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -276,6 +281,7 @@ class GameView(context: Context) : View(context) {
                                     for (col in 0..<CELLS_COUNT) {
                                         val idx = col + row * CELLS_COUNT
                                         cells[idx] = false
+                                        score += 10
                                     }
                                 }
                             }
@@ -284,7 +290,10 @@ class GameView(context: Context) : View(context) {
                                 if (filledCols[col]) {
                                     for (row in 0..<CELLS_COUNT) {
                                         val idx = col + row * CELLS_COUNT
-                                        cells[idx] = false
+                                        if (cells[idx]) {
+                                            cells[idx] = false
+                                            score += 10
+                                        }
                                     }
                                 }
 

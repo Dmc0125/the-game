@@ -8,8 +8,10 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -76,7 +78,7 @@ enum class Screen {
 
 @Composable
 fun App() {
-    var screen by remember { mutableStateOf(Screen.Start) }
+    var screen by remember { mutableStateOf(Screen.Game) }
 
     Box(modifier = Modifier.fillMaxSize().background(COLOR_YELLOW), contentAlignment = Alignment.Center) {
         when (screen) {
@@ -127,8 +129,13 @@ fun Modifier.neobrutalistShadow(
 @Composable
 fun GameScreen() {
     val gameView = remember { mutableStateOf<GameView?>(null) }
+    val score = remember { mutableStateOf(0) }
 
-    Box(
+    fun onScoreChange(newScore: Int) {
+        score.value = newScore
+    }
+
+    Column(
         modifier = Modifier
             .padding(start = 20.dp, top = 48.dp, end = 20.dp)
             .fillMaxSize()
@@ -142,11 +149,31 @@ fun GameScreen() {
                     }
                 }
             },
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .neobrutalistShadow()
+                .clip(RoundedCornerShape(RADIUS.dp))
+                .background(Color.White)
+                .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
+                .padding(horizontal = 20.dp, vertical = 16.dp)
+        ) {
+            val score = "%05d".format(score.value)
+            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                BasicText(text = "Score", style = TextStyle(fontSize = 16.sp, fontFamily = AppFont.famRegular))
+                BasicText(text = score, style = TextStyle(fontSize = 32.sp, fontFamily = AppFont.famMonoMedium))
+            }
+        }
+
         AndroidView(
-            modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .neobrutalistShadow(),
             factory = { context ->
-                GameView(context).also {
+                GameView(context, ::onScoreChange).also {
                     gameView.value = it
                     it.resume()
                 }

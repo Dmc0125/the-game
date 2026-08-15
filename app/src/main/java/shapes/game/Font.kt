@@ -13,6 +13,9 @@ object AppFont {
     lateinit var bold: Typeface
     lateinit var extraBold: Typeface
 
+    lateinit var monoRegular: Typeface
+    lateinit var monoMedium: Typeface
+
     lateinit var famExtraLight: FontFamily
     lateinit var famLight: FontFamily
     lateinit var famRegular: FontFamily
@@ -20,6 +23,9 @@ object AppFont {
     lateinit var famSemiBold: FontFamily
     lateinit var famBold: FontFamily
     lateinit var famExtraBold: FontFamily
+
+    lateinit var famMonoRegular: FontFamily
+    lateinit var famMonoMedium: FontFamily
 
     fun init(context: Context) {
         val assets = context.applicationContext.assets
@@ -37,5 +43,10 @@ object AppFont {
         famBold = FontFamily(bold)
         extraBold = Typeface.createFromAsset(assets, "font/manrope_extrabold.ttf")!!
         famExtraBold = FontFamily(extraBold)
+
+        monoRegular = Typeface.createFromAsset(assets, "font/DMMono-Regular.ttf")!!
+        famMonoRegular = FontFamily(monoRegular)
+        monoMedium = Typeface.createFromAsset(assets, "font/DMMono-Medium.ttf")!!
+        famMonoMedium = FontFamily(monoMedium)
     }
 }
