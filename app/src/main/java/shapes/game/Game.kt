@@ -17,6 +17,7 @@ const val CELLS_COUNT = 15
 const val CELL_PADDING_FRACTION = 0.08f
 const val PLAYGROUND_PADDING_FRACTION = 0.01f
 const val DRAG_SENSITIVITY = 2f
+const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
 
 val shapes: Array<Array<Coords>> = arrayOf(
     // 1x1
@@ -50,6 +51,23 @@ val shapes: Array<Array<Coords>> = arrayOf(
     arrayOf(Coords(2, 0), Coords(2, 1), Coords(2, 2), Coords(2, 3)),
 )
 
+val GCOLOR_RED = Color.rgb(197, 40, 61)
+val GCOLOR_OVERLAPPING = Color.argb(200, Color.red(GCOLOR_RED), Color.green(GCOLOR_RED), Color.blue(GCOLOR_RED))
+val GCOLOR_YELLOW = Color.rgb(226, 239, 112)
+val GCOLOR_BLACK = Color.rgb(19, 21, 21)
+
+val GCOLOR_BLUE = Color.rgb(112, 228, 239)
+val GCOLOR_PURPLE = Color.rgb(203, 66, 159)
+val GCOLOR_ORANGE = Color.rgb(217, 93, 57)
+val GCOLOR_PINK = Color.rgb(227, 86, 124)
+
+val colors: Array<Int> = arrayOf(
+    GCOLOR_BLUE,
+    GCOLOR_PURPLE,
+    GCOLOR_ORANGE,
+    GCOLOR_PINK,
+)
+
 data class Rect(
     var x: Float = 0f,
     var y: Float = 0f,
@@ -78,6 +96,7 @@ private fun Context.sp(value: Float): Float {
 enum class GameState {
     Countdown,
     Placing,
+    AnimatingCurrentShape,
 }
 
 class CountdownText(val paint: Paint, context: Context) {
@@ -133,12 +152,21 @@ class CountdownText(val paint: Paint, context: Context) {
 }
 
 class CurrentShape(
-    var shape: Int,
+    val shape: Int,
     var dragging: Boolean = false,
     var coords: Coords = Coords(5, 5),
 ) {
-    var coordsPrev = Coords(5, 5)
+    val color: Int = colors[Random.nextInt(colors.size)]
+
+    var coordsPrev = coords.copy()
     var overlapping = false
+
+    val animationDuration = SHAPE_MOVEMENT_ANIMATION_DURATION
+    var animating = false
+    var visualCoords = Vec2(coords.col.toFloat(), coords.row.toFloat())
+    var animationStartTime = 0f
+    var animationStartCoords = Vec2(0f, 0f)
+    var animationEndCoords = Vec2(0f, 0f)
 
     fun cells(): Iterable<Coords> {
         return Iterable {
@@ -160,15 +188,44 @@ class CurrentShape(
         }
     }
 
-    fun checkOverlap(cells: Array<Boolean>) {
+    fun checkOverlap(cells: Array<Cell>) {
         overlapping = false
         for (cellCoords in cells()) {
             val idx = cellCoords.col + cellCoords.row * CELLS_COUNT
-            if (cells[idx]) {
+            if (cells[idx].filled) {
                 overlapping = true
                 break
             }
         }
+    }
+
+    fun beginCoordsAnimation(elapsedTime: Float) {
+        if (coords.col == animationEndCoords.x.toInt() && coords.row == animationEndCoords.y.toInt()) {
+            return
+        }
+
+        animationStartTime = elapsedTime
+        animationStartCoords = visualCoords.copy()
+        animationEndCoords = coords.toVec2()
+        animating = true
+    }
+
+    fun animateCoords(elapsedTime: Float) {
+        if (!animating) {
+            return
+        }
+
+        val dt = elapsedTime - animationStartTime
+        val fraction = dt / animationDuration
+
+        if (fraction >= 1f) {
+            visualCoords = Vec2(coords.col.toFloat(), coords.row.toFloat())
+            animating = false
+            return
+        }
+
+        val coordsDiff = animationEndCoords - animationStartCoords
+        visualCoords = animationStartCoords + (coordsDiff * fraction)
     }
 }
 
@@ -188,6 +245,8 @@ class ShapesBag {
     }
 }
 
+data class Cell(var color: Int = 0, var filled: Boolean = false)
+
 class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(context) {
     var running = false
     var lastFrameTime = 0L
@@ -201,7 +260,7 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
     var currentShape = CurrentShape(0)
     var cellSize = 0f
     var cellPadding = 0f
-    val cells = Array(CELLS_COUNT * CELLS_COUNT) { false }
+    val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell() }
     val shapesBag = ShapesBag()
     var score = 0
         set(value) {
@@ -222,6 +281,70 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
         cellPadding = cellSize * CELL_PADDING_FRACTION
     }
 
+    fun placeShapeAndDeleteFilled() {
+        // place
+        for (cellCoords in currentShape.cells()) {
+            val idx = cellCoords.col + cellCoords.row * CELLS_COUNT
+            val cell = cells[idx]
+            cell.filled = true
+            cell.color = currentShape.color
+        }
+
+        // delete filled
+        val filledRows = BooleanArray(CELLS_COUNT) { false }
+        val filledCols = BooleanArray(CELLS_COUNT) { false }
+
+        for (row in 0..<CELLS_COUNT) {
+            var filled = true
+            for (col in 0..<CELLS_COUNT) {
+                val idx = col + row * CELLS_COUNT
+                if (!cells[idx].filled) {
+                    filled = false
+                    break
+                }
+            }
+            if (filled) {
+                filledRows[row] = true
+            }
+        }
+
+        for (col in 0..<CELLS_COUNT) {
+            var filled = true
+            for (row in 0..<CELLS_COUNT) {
+                val idx = col + row * CELLS_COUNT
+                if (!cells[idx].filled) {
+                    filled = false
+                    break
+                }
+            }
+            if (filled) {
+                filledCols[col] = true
+            }
+        }
+
+        for (row in 0..<CELLS_COUNT) {
+            if (filledRows[row]) {
+                for (col in 0..<CELLS_COUNT) {
+                    val idx = col + row * CELLS_COUNT
+                    cells[idx].filled = false
+                    score += 10
+                }
+            }
+        }
+
+        for (col in 0..<CELLS_COUNT) {
+            if (filledCols[col]) {
+                for (row in 0..<CELLS_COUNT) {
+                    val idx = col + row * CELLS_COUNT
+                    if (cells[idx].filled) {
+                        cells[idx].filled = false
+                        score += 10
+                    }
+                }
+            }
+        }
+    }
+
     fun update(dt: Float) {
         when (state) {
             GameState.Countdown -> {
@@ -238,70 +361,13 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                 } else if (currentShape.dragging) {
                     if (!touch.isDown) {
                         if (!currentShape.overlapping) {
-                            // place
-                            for (cellCoords in currentShape.cells()) {
-                                val idx = cellCoords.col + cellCoords.row * CELLS_COUNT
-                                cells[idx] = true
+                            if (!currentShape.animating) {
+                                placeShapeAndDeleteFilled()
+                                currentShape = CurrentShape(shapesBag.next())
+                                currentShape.checkOverlap(cells)
+                            } else {
+                                state = GameState.AnimatingCurrentShape
                             }
-
-                            // delete filled
-                            val filledRows = BooleanArray(CELLS_COUNT) { false }
-                            val filledCols = BooleanArray(CELLS_COUNT) { false }
-
-                            for (row in 0..<CELLS_COUNT) {
-                                var filled = true
-                                for (col in 0..<CELLS_COUNT) {
-                                    val idx = col + row * CELLS_COUNT
-                                    if (!cells[idx]) {
-                                        filled = false
-                                        break
-                                    }
-                                }
-                                if (filled) {
-                                    filledRows[row] = true
-                                }
-                            }
-
-                            for (col in 0..<CELLS_COUNT) {
-                                var filled = true
-                                for (row in 0..<CELLS_COUNT) {
-                                    val idx = col + row * CELLS_COUNT
-                                    if (!cells[idx]) {
-                                        filled = false
-                                        break
-                                    }
-                                }
-                                if (filled) {
-                                    filledCols[col] = true
-                                }
-                            }
-
-                            for (row in 0..<CELLS_COUNT) {
-                                if (filledRows[row]) {
-                                    for (col in 0..<CELLS_COUNT) {
-                                        val idx = col + row * CELLS_COUNT
-                                        cells[idx] = false
-                                        score += 10
-                                    }
-                                }
-                            }
-
-                            for (col in 0..<CELLS_COUNT) {
-                                if (filledCols[col]) {
-                                    for (row in 0..<CELLS_COUNT) {
-                                        val idx = col + row * CELLS_COUNT
-                                        if (cells[idx]) {
-                                            cells[idx] = false
-                                            score += 10
-                                        }
-                                    }
-                                }
-
-                            }
-
-                            // new shape
-                            currentShape = CurrentShape(shapesBag.next())
-                            currentShape.checkOverlap(cells)
                         } else {
                             currentShape.coordsPrev = currentShape.coords.copy()
                         }
@@ -330,46 +396,64 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
 
                         currentShape.coords = newCoords
                         currentShape.checkOverlap(cells)
+                        currentShape.beginCoordsAnimation(elapsedTime)
                     }
+                }
+
+                currentShape.animateCoords(elapsedTime)
+            }
+
+            GameState.AnimatingCurrentShape -> {
+                currentShape.animateCoords(elapsedTime)
+
+                if (!currentShape.animating) {
+                    placeShapeAndDeleteFilled()
+
+                    state = GameState.Placing
+                    currentShape = CurrentShape(shapesBag.next())
+                    currentShape.checkOverlap(cells)
                 }
             }
         }
     }
 
+    fun coordsToPos(coords: Vec2): Vec2 {
+        val x = coords.x * cellSize + pgPadding
+        val y = coords.y * cellSize + pgPadding
+        return Vec2(x, y)
+    }
+
+    fun renderCell(canvas: Canvas, coords: Coords) {
+        renderCell(canvas, coords.toVec2())
+    }
+
+    fun renderCell(canvas: Canvas, coords: Vec2) {
+        val (cellx, celly) = coordsToPos(coords)
+        val p = cellPadding
+        val r = dp(RADIUS) - p
+        canvas.drawRoundRect(
+            cellx + p, celly + p, cellx + cellSize - p, celly + cellSize - p,
+            r, r,
+            paint,
+        )
+    }
 
     fun render(canvas: Canvas) {
-        fun coordsToPos(coords: Coords): Vec2 {
-            val x = coords.col * cellSize + pgPadding
-            val y = coords.row * cellSize + pgPadding
-            return Vec2(x, y)
-        }
-
-        fun renderCell(coords: Coords) {
-            val (cellx, celly) = coordsToPos(coords)
-            val p = cellPadding
-            val r = dp(RADIUS) - p
-            canvas.drawRoundRect(
-                cellx + p, celly + p, cellx + cellSize - p, celly + cellSize - p,
-                r, r,
-                paint,
-            )
-        }
-
-        paint.color = Color.BLACK
+        paint.color = GCOLOR_BLACK
         canvas.drawRoundRect(pgRect.rectf, dp(RADIUS), dp(RADIUS), paint)
 
         run { // draw placed cells
             paint.reset()
-            paint.color = Color.LTGRAY
             val scratchCoords = Coords(0, 0)
             for (idx in 0..<CELLS_COUNT * CELLS_COUNT) {
-                if (!cells[idx]) {
+                if (!cells[idx].filled) {
                     continue
                 }
 
                 scratchCoords.col = idx % CELLS_COUNT
                 scratchCoords.row = idx / CELLS_COUNT
-                renderCell(scratchCoords)
+                paint.color = cells[idx].color
+                renderCell(canvas, scratchCoords)
             }
         }
 
@@ -378,16 +462,17 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                 countdownText.render(canvas)
             }
 
-            GameState.Placing -> {
+            GameState.Placing, GameState.AnimatingCurrentShape -> {
                 assert(currentShape.shape < shapes.size)
 
                 paint.reset()
-                for (cellCoords in currentShape.cells()) {
-                    paint.color = Color.GREEN
+                for (cellOffset in shapes[currentShape.shape]) {
+                    val cellCoords = cellOffset.toVec2() + currentShape.visualCoords
+                    paint.color = currentShape.color
                     if (currentShape.overlapping) {
-                        paint.color = Color.RED
+                        paint.color = GCOLOR_OVERLAPPING
                     }
-                    renderCell(cellCoords)
+                    renderCell(canvas, cellCoords)
                 }
             }
         }

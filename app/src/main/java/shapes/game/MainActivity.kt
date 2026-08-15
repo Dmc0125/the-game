@@ -47,7 +47,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import shapes.game.R
 
-val COLOR_GREEN = Color(112, 228, 239)
+val COLOR_BLUE = Color(112, 228, 239)
 val COLOR_YELLOW = Color(226, 239, 112)
 val RADIUS = 8f
 
@@ -88,7 +88,7 @@ fun App() {
                         .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
                         .neobrutalistShadow()
                         .clip(RoundedCornerShape(RADIUS.dp))
-                        .background(COLOR_GREEN)
+                        .background(COLOR_BLUE)
                         .padding(horizontal = 40.dp, vertical = 16.dp)
                         .clickable(
                             interactionSource = null,

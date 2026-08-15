@@ -72,6 +72,10 @@ data class Coords(var col: Int, var row: Int) {
     operator fun div(other: Int): Coords {
         return Coords(col / other, row / other)
     }
+
+    fun toVec2(): Vec2 {
+        return Vec2(col.toFloat(), row.toFloat())
+    }
 }
 
 data class Touch(
