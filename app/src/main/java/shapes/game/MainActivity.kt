@@ -1,5 +1,6 @@
 package shapes.game
 
+import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -20,16 +21,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        this.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+
         setContent {
             App()
         }
@@ -73,18 +88,33 @@ fun App() {
 
 @Composable
 fun GameScreen() {
+    val gameView = remember { mutableStateOf<GameView?>(null) }
+
     Box(
         modifier = Modifier
             .padding(start = 20.dp, top = 30.dp, end = 20.dp)
-            .fillMaxSize(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.Black)
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (gameView.value != null) {
+                            gameView.value!!.handleTouch(event)
+                        }
+                    }
+                }
+            },
+
         ) {
-        }
+        AndroidView(
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+            factory = { context ->
+                GameView(context).also {
+                    gameView.value = it
+                    it.resume()
+                }
+            },
+            onRelease = { gameView -> gameView.pause() },
+        )
     }
 }
