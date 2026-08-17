@@ -18,6 +18,7 @@ const val CELL_PADDING_FRACTION = 0.08f
 const val PLAYGROUND_PADDING_FRACTION = 0.02f
 const val DRAG_SENSITIVITY = 1.75f
 const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
+const val EXPLOSION_ANIMATION_DURATION = 0.5f
 
 fun generateShapeOffsets(base: Array<Coords>): Array<Array<Coords>> {
     fun center(offsets: Array<Coords>): Array<Coords> {
@@ -138,6 +139,7 @@ enum class GameState {
     Countdown,
     Placing,
     AnimatingCurrentShape,
+    AnimatingCellsExplosion,
 }
 
 class CountdownText(val paint: Paint, context: Context) {
@@ -195,19 +197,27 @@ class CountdownText(val paint: Paint, context: Context) {
 fun lerp(start: Float, end: Float, progress: Float): Float = start + (end - start) * progress
 fun lerp(start: Vec2, end: Vec2, progress: Float): Vec2 = start + (end - start) * progress
 
-data class Animation<T>(var current: T, val duration: Float, val lerp: (start: T, end: T, progress: Float) -> T) {
+data class Animation<T>(
+    var current: T,
+    val duration: Float,
+    val lerp: (start: T, end: T, progress: Float) -> T,
+) {
     var animating = false
     var animationStartTime = 0f
     var animationStartValue: T = current
     var animationEndValue: T = current
 
     fun begin(elapsedTime: Float, endVal: T) {
-        if (endVal == animationEndValue) return
+        if (animating) {
+            update(elapsedTime)
+        }
 
-        animating = true
+        if (endVal == current) return
+
+        animationStartValue = current
         animationEndValue = endVal
         animationStartTime = elapsedTime
-        animationStartValue = current
+        animating = true
     }
 
     fun update(elapsedTime: Float) {
@@ -225,7 +235,7 @@ data class Animation<T>(var current: T, val duration: Float, val lerp: (start: T
 }
 
 class CurrentShape(
-    val shape: Int,
+    var shape: Int = -1,
 ) {
     var rotation: Int = 0
     var dragging: Boolean = false
@@ -308,7 +318,26 @@ class ShapesBag {
     }
 }
 
-data class Cell(var color: Int = 0, var filled: Boolean = false)
+data class Cell(
+    var color: Int = 0,
+    var filled: Boolean = false,
+) {
+    val explosionAnim: Animation<Int> = Animation(
+        0,
+        EXPLOSION_ANIMATION_DURATION,
+        lerp = { start, end, progress ->
+            val r = lerp(Color.red(start).toFloat(), Color.red(end).toFloat(), progress).toInt()
+            val g = lerp(Color.green(start).toFloat(), Color.green(end).toFloat(), progress).toInt()
+            val b = lerp(Color.blue(start).toFloat(), Color.blue(end).toFloat(), progress).toInt()
+            Color.rgb(r, g, b)
+        },
+    )
+
+    fun beginExplosion(elapsedTime: Float) {
+        explosionAnim.current = color
+        explosionAnim.begin(elapsedTime, Color.WHITE)
+    }
+}
 
 class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(context) {
     var running = false
@@ -355,6 +384,8 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
             cell.color = currentShape.color
         }
 
+        currentShape.shape = -1
+
         // delete filled
         val filledRows = BooleanArray(CELLS_COUNT) { false }
         val filledCols = BooleanArray(CELLS_COUNT) { false }
@@ -387,12 +418,14 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
             }
         }
 
+        var animating = false
+
         for (row in 0..<CELLS_COUNT) {
             if (filledRows[row]) {
                 for (col in 0..<CELLS_COUNT) {
                     val idx = col + row * CELLS_COUNT
-                    cells[idx].filled = false
-                    score += 10
+                    cells[idx].beginExplosion(elapsedTime)
+                    animating = true
                 }
             }
         }
@@ -402,15 +435,19 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                 for (row in 0..<CELLS_COUNT) {
                     val idx = col + row * CELLS_COUNT
                     if (cells[idx].filled) {
-                        cells[idx].filled = false
-                        score += 10
+                        cells[idx].beginExplosion(elapsedTime)
+                        animating = true
                     }
                 }
             }
         }
+
+        if (animating) {
+            state = GameState.AnimatingCellsExplosion
+        }
     }
 
-    fun checkOverflowAndUnderflow(newCoords: Coords, cellsOffsets: Array<Coords>): Pair<Boolean, Coords> {
+    fun checkOverTheEdge(newCoords: Coords, cellsOffsets: Array<Coords>): Coords {
         var minCol = Int.MAX_VALUE
         var maxCol = Int.MIN_VALUE
         var minRow = Int.MAX_VALUE
@@ -430,39 +467,39 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
         if (minRow < 0) offsets.row -= minRow
         if (maxRow >= CELLS_COUNT) offsets.row -= (maxRow - CELLS_COUNT + 1)
 
-        val isOutside = offsets.col != 0 || offsets.row != 0
-
-        return Pair(isOutside, offsets)
+        return offsets
     }
 
     fun update(dt: Float) {
-        fun spawnShape() {
-            currentShape = CurrentShape(shapesBag.next())
-            currentShape.checkOverlap(cells)
-            pendingRotations = 0
-        }
-
         when (state) {
             GameState.Countdown -> {
                 // if (countdownText.update(elapsedTime, pgRect)) {
                 state = GameState.Placing
-                spawnShape()
                 // }
             }
 
             GameState.Placing -> {
+                if (currentShape.shape == -1) {
+                    currentShape = CurrentShape(shapesBag.next())
+                    currentShape.checkOverlap(cells)
+                    pendingRotations = 0
+                    pendingPlacements = 0
+                }
+
                 if (pendingRotations > 0) {
                     val newRotation = currentShape.rotation + 1
-                    val offsets = shapes[(currentShape.shape * 4) + (newRotation % 4)]
-                    val (isOutside, _) = checkOverflowAndUnderflow(currentShape.coords, offsets)
+                    val newOffsets = shapes[(currentShape.shape * 4) + (newRotation % 4)]
+                    val kicks = checkOverTheEdge(currentShape.coords, newOffsets)
 
-                    if (!isOutside) {
-                        currentShape.rotation = newRotation
-                        currentShape.checkOverlap(cells)
-                        currentShape.beginRotationAnimation(elapsedTime)
-                    } else {
-                        // TODO: indicate
+                    currentShape.rotation = newRotation
+
+                    if (kicks.col != 0 || kicks.row != 0) {
+                        currentShape.coords += kicks
+                        currentShape.beginMovementAnimation(elapsedTime)
                     }
+
+                    currentShape.checkOverlap(cells)
+                    currentShape.beginRotationAnimation(elapsedTime)
 
                     pendingRotations = 0
                 }
@@ -471,12 +508,11 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                     if (!currentShape.overlapping) {
                         if (!currentShape.movementAnimation.animating) {
                             placeShapeAndDeleteFilled()
-                            spawnShape()
-                            pendingPlacements = 0
                         } else {
                             state = GameState.AnimatingCurrentShape
                         }
                     }
+                    pendingPlacements = 0
                 }
 
                 if (!currentShape.dragging && touch.isDown) {
@@ -491,9 +527,9 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                         var newCoords = currentShape.coordsPrev + colsDiff.toCoords()
 
                         val cellsOffsets = shapes[currentShape.shapeIdx()]
-                        val (_, offsets) = checkOverflowAndUnderflow(newCoords, cellsOffsets)
+                        val kicks = checkOverTheEdge(newCoords, cellsOffsets)
 
-                        currentShape.coords = newCoords + offsets
+                        currentShape.coords = newCoords + kicks
                         currentShape.checkOverlap(cells)
                         currentShape.beginMovementAnimation(elapsedTime)
                     }
@@ -508,9 +544,30 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
 
                 if (!currentShape.movementAnimation.animating) {
                     placeShapeAndDeleteFilled()
-
                     state = GameState.Placing
-                    spawnShape()
+                }
+            }
+
+            GameState.AnimatingCellsExplosion -> {
+                var allDone = true
+
+                for (cellIdx in cells.indices) {
+                    val cell = cells[cellIdx]
+
+                    if (cell.explosionAnim.animating) {
+                        cell.explosionAnim.update(elapsedTime)
+                        val done = !cell.explosionAnim.animating
+                        if (done) {
+                            cell.filled = false
+                            score += 10
+                        } else {
+                            allDone = false
+                        }
+                    }
+                }
+
+                if (allDone) {
+                    state = GameState.Placing
                 }
             }
         }
@@ -551,7 +608,11 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
 
                 scratchCoords.col = idx % CELLS_COUNT
                 scratchCoords.row = idx / CELLS_COUNT
-                paint.color = cells[idx].color
+                paint.color = if (cells[idx].explosionAnim.animating) {
+                    cells[idx].explosionAnim.current
+                } else {
+                    cells[idx].color
+                }
                 renderCell(canvas, scratchCoords)
             }
         }
@@ -564,35 +625,39 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
             GameState.Placing, GameState.AnimatingCurrentShape -> {
                 assert(currentShape.shape < shapes.size)
 
-                paint.reset()
+                if (currentShape.shape != -1) {
+                    paint.reset()
 
-                if (currentShape.rotationAnimation.animating) {
-                    // render rotation
-                    val pivot = coordsToPos(currentShape.movementAnimation.current + Vec2(2f, 2f))
-                    canvas.save()
-                    canvas.rotate(currentShape.rotationAnimation.current, pivot.x, pivot.y)
+                    if (currentShape.rotationAnimation.animating) {
+                        // render rotation
+                        val pivot = coordsToPos(currentShape.movementAnimation.current + Vec2(2f, 2f))
+                        canvas.save()
+                        canvas.rotate(currentShape.rotationAnimation.current, pivot.x, pivot.y)
 
-                    for (cellOffset in shapes[currentShape.shape * 4]) {
-                        val cellCoords = cellOffset.toVec2() + currentShape.movementAnimation.current
-                        paint.color = currentShape.color
-                        if (currentShape.overlapping) {
-                            paint.color = GCOLOR_OVERLAPPING
+                        for (cellOffset in shapes[currentShape.shape * 4]) {
+                            val cellCoords = cellOffset.toVec2() + currentShape.movementAnimation.current
+                            paint.color = currentShape.color
+                            if (currentShape.overlapping) {
+                                paint.color = GCOLOR_OVERLAPPING
+                            }
+                            renderCell(canvas, cellCoords)
                         }
-                        renderCell(canvas, cellCoords)
-                    }
 
-                    canvas.restore()
-                } else {
-                    for (cellOffset in shapes[currentShape.shapeIdx()]) {
-                        val cellCoords = cellOffset.toVec2() + currentShape.movementAnimation.current
-                        paint.color = currentShape.color
-                        if (currentShape.overlapping) {
-                            paint.color = GCOLOR_OVERLAPPING
+                        canvas.restore()
+                    } else {
+                        for (cellOffset in shapes[currentShape.shapeIdx()]) {
+                            val cellCoords = cellOffset.toVec2() + currentShape.movementAnimation.current
+                            paint.color = currentShape.color
+                            if (currentShape.overlapping) {
+                                paint.color = GCOLOR_OVERLAPPING
+                            }
+                            renderCell(canvas, cellCoords)
                         }
-                        renderCell(canvas, cellCoords)
                     }
                 }
             }
+
+            GameState.AnimatingCellsExplosion -> {}
         }
     }
 

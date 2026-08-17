@@ -263,6 +263,11 @@ fun Button(
                 translationX = animTranslation.toPx()
                 translationY = animTranslation.toPx()
             }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            )
             .neobrutalistShadow(
                 offsetX = 6.dp - animTranslation,
                 offsetY = 6.dp - animTranslation,
@@ -270,12 +275,7 @@ fun Button(
             .clip(RoundedCornerShape(RADIUS.dp))
             .background(backgroundColor)
             .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
-            .padding(horizontal = paddingHorizontal, vertical = paddingVertical)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
-            ),
+            .padding(horizontal = paddingHorizontal, vertical = paddingVertical),
         contentAlignment = Alignment.Center,
         content = content,
     )
