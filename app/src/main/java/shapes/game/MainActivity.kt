@@ -5,9 +5,12 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -31,6 +34,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
@@ -49,7 +53,7 @@ import shapes.game.R
 
 val COLOR_BLUE = Color(112, 228, 239)
 val COLOR_YELLOW = Color(226, 239, 112)
-val RADIUS = 8f
+const val RADIUS = 8f
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,22 +82,16 @@ enum class Screen {
 
 @Composable
 fun App() {
-    var screen by remember { mutableStateOf(Screen.Game) }
+    var screen by remember { mutableStateOf(Screen.Start) }
 
     Box(modifier = Modifier.fillMaxSize().background(COLOR_YELLOW), contentAlignment = Alignment.Center) {
         when (screen) {
             Screen.Start -> {
-                Box(
-                    Modifier
-                        .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
-                        .neobrutalistShadow()
-                        .clip(RoundedCornerShape(RADIUS.dp))
-                        .background(COLOR_BLUE)
-                        .padding(horizontal = 40.dp, vertical = 16.dp)
-                        .clickable(
-                            interactionSource = null,
-                            indication = null,
-                        ) { screen = Screen.Game }
+                Button(
+                    backgroundColor = COLOR_BLUE,
+                    paddingHorizontal = 32.dp,
+                    paddingVertical = 20.dp,
+                    onClick = { screen = Screen.Game },
                 ) {
                     BasicText(
                         text = "Start",
@@ -142,9 +140,18 @@ fun GameScreen() {
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (gameView.value != null) {
-                            gameView.value!!.handleTouch(event)
+                        val event = awaitPointerEvent(PointerEventPass.Main)
+
+                        var skip = false
+                        for (change in event.changes) {
+                            if (change.isConsumed) {
+                                skip = true
+                                break
+                            }
+                        }
+
+                        if (!skip) {
+                            gameView.value?.handleTouch(event)
                         }
                     }
                 }
@@ -162,8 +169,22 @@ fun GameScreen() {
         ) {
             val score = "%05d".format(score.value)
             Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                BasicText(text = "Score", style = TextStyle(fontSize = 16.sp, fontFamily = AppFont.famRegular))
-                BasicText(text = score, style = TextStyle(fontSize = 32.sp, fontFamily = AppFont.famMonoMedium))
+                BasicText(
+                    text = "Score",
+                    style = TextStyle(
+                        fontSize = 16.sp,
+                        fontFamily = AppFont.famRegular,
+                        color = Color.Black,
+                    ),
+                )
+                BasicText(
+                    text = score,
+                    style = TextStyle(
+                        fontSize = 32.sp,
+                        fontFamily = AppFont.famMonoMedium,
+                        color = Color.Black,
+                    ),
+                )
             }
         }
 
@@ -180,5 +201,82 @@ fun GameScreen() {
             },
             onRelease = { gameView -> gameView.pause() },
         )
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            Button(
+                paddingHorizontal = 32.dp,
+                paddingVertical = 32.dp,
+                onClick = { gameView.value?.handleRotate() },
+            ) {
+                BasicText(
+                    text = "R",
+                    style = TextStyle(
+                        fontSize = 16.sp,
+                        fontFamily = AppFont.famBold,
+                        color = Color.Black,
+                    )
+                )
+            }
+
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                paddingHorizontal = 32.dp,
+                paddingVertical = 32.dp,
+                onClick = { gameView.value?.handlePlace() },
+            ) {
+                BasicText(
+                    text = "Place",
+                    style = TextStyle(
+                        fontSize = 16.sp,
+                        fontFamily = AppFont.famBold,
+                        color = Color.Black,
+                    )
+                )
+            }
+        }
     }
+}
+
+@Composable
+fun Button(
+    modifier: Modifier = Modifier,
+    backgroundColor: Color = Color.White,
+    paddingHorizontal: Dp = 20.dp,
+    paddingVertical: Dp = 20.dp,
+    onClick: () -> Unit,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+
+    val animTranslation by animateDpAsState(
+        targetValue = if (pressed) 6.dp else 0.dp,
+        label = "translation",
+    )
+
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                translationX = animTranslation.toPx()
+                translationY = animTranslation.toPx()
+            }
+            .neobrutalistShadow(
+                offsetX = 6.dp - animTranslation,
+                offsetY = 6.dp - animTranslation,
+            )
+            .clip(RoundedCornerShape(RADIUS.dp))
+            .background(backgroundColor)
+            .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
+            .padding(horizontal = paddingHorizontal, vertical = paddingVertical)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+        content = content,
+    )
 }
