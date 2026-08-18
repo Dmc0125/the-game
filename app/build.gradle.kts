@@ -3,6 +3,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val logDebug = providers.gradleProperty("logDebug").map { it.toBoolean() }.orElse(false)
+
 android {
     namespace = "shapes.game"
     compileSdk {
@@ -17,6 +19,8 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("Boolean", "LOG_DEBUG", logDebug.get().toString())
     }
 
     buildTypes {

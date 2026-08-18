@@ -1,5 +1,7 @@
 package shapes.game
 
+import android.util.Log
+
 // TODO: maybe rewrite these into value class so they do not allocate
 
 data class Vec2(var x: Float, var y: Float) {
@@ -86,4 +88,10 @@ data class Touch(
 
 fun colorAddAlpha(color: Int, alpha: Int): Int {
     return alpha or (color and (0xff shl 16)) or (color and (0xff shl 8)) or (color and 0xff)
+}
+
+fun logd(message: String) {
+    if (BuildConfig.LOG_DEBUG) {
+        Log.d("ShapesGame", message)
+    }
 }
