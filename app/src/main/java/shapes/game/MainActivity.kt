@@ -83,6 +83,9 @@ enum class Screen {
 @Composable
 fun App() {
     var screen by remember { mutableStateOf(Screen.Start) }
+    if (BuildConfig.DEBUG) {
+        screen = Screen.Game
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(COLOR_YELLOW), contentAlignment = Alignment.Center) {
         when (screen) {
@@ -237,6 +240,24 @@ fun GameScreen() {
                 )
             }
         }
+
+        if (BuildConfig.DEBUG) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    text = "1x1",
+                    onClick = { gameView.value?.debugSpawnShape() },
+                )
+                Button(
+                    modifier = Modifier.weight(1f),
+                    text = "Fill row",
+                    onClick = { gameView.value?.debugFillRow() },
+                )
+            }
+        }
     }
 }
 
@@ -247,8 +268,24 @@ fun Button(
     paddingHorizontal: Dp = 20.dp,
     paddingVertical: Dp = 20.dp,
     onClick: () -> Unit,
-    content: @Composable BoxScope.() -> Unit,
+    text: String? = null,
+    content: (@Composable BoxScope.() -> Unit)? = null,
 ) {
+    var c = content
+    if (c == null && text != null) {
+        c = {
+            BasicText(
+                text = text,
+                style = TextStyle(
+                    fontSize = 16.sp,
+                    fontFamily = AppFont.famBold,
+                    color = Color.Black,
+                )
+            )
+        }
+    }
+    check(c != null)
+
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
 
@@ -277,6 +314,7 @@ fun Button(
             .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
             .padding(horizontal = paddingHorizontal, vertical = paddingVertical),
         contentAlignment = Alignment.Center,
-        content = content,
-    )
+    ) {
+        c()
+    }
 }

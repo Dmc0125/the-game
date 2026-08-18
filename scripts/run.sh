@@ -6,7 +6,11 @@ APK="app/build/outputs/apk/debug/app-debug.apk"
 
 DEVICE_SERIAL="$(
   adb devices |
-    awk 'NR > 1 && $2 == "device" { print $1; exit }'
+    awk 'NR > 1 && $NF == "device" {
+        sub(/[[:space:]]+device[[:space:]]*$/, "")
+        print
+        exit
+    }'
 )"
 
 if [[ -z "$DEVICE_SERIAL" ]]; then
@@ -19,7 +23,8 @@ echo "Using device: $DEVICE_SERIAL"
 adb -s "$DEVICE_SERIAL" logcat -c # clear logcat
 ./gradlew assembleDebug # build
 adb -s "$DEVICE_SERIAL" install -r "$APK" # install on device
-adb -s "$DEVICE_SERIAL" shell monkey -p "$APP_ID" 1 # launch on device
+adb -s "$DEVICE_SERIAL" shell am force-stop "$APP_ID" 1
+adb -s "$DEVICE_SERIAL" shell am start -n "$APP_ID/.MainActivity"
 
 # wait for app to start and get PID
 

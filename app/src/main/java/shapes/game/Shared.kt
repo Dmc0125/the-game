@@ -83,3 +83,7 @@ data class Touch(
     var position: Vec2 = Vec2(0f, 0f),
     var startPosition: Vec2 = Vec2(0f, 0f),
 )
+
+fun colorAddAlpha(color: Int, alpha: Int): Int {
+    return alpha or (color and (0xff shl 16)) or (color and (0xff shl 8)) or (color and 0xff)
+}

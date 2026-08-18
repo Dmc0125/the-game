@@ -14,11 +14,30 @@ import kotlin.math.ceil
 import kotlin.random.Random
 
 const val CELLS_COUNT = 15
-const val CELL_PADDING_FRACTION = 0.08f
+const val CELL_PADDING_FRACTION = 0.1f
 const val PLAYGROUND_PADDING_FRACTION = 0.02f
 const val DRAG_SENSITIVITY = 1.75f
 const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
-const val EXPLOSION_ANIMATION_DURATION = 0.5f
+const val EXPLOSION_CHARGE_ANIMATION_DURATION = 0.5f
+const val EXPLOSION_CELL_PULSE_COUNT = 5
+const val EXPLOSION_CELL_SCALE_MAX = 1.1f
+
+val GCOLOR_RED = Color.rgb(197, 40, 61)
+val GCOLOR_OVERLAPPING = Color.argb(200, Color.red(GCOLOR_RED), Color.green(GCOLOR_RED), Color.blue(GCOLOR_RED))
+val GCOLOR_YELLOW = Color.rgb(226, 239, 112)
+val GCOLOR_BLACK = Color.rgb(29, 32, 32)
+
+val GCOLOR_BLUE = Color.rgb(112, 228, 239)
+val GCOLOR_PURPLE = Color.rgb(203, 66, 159)
+val GCOLOR_ORANGE = Color.rgb(217, 93, 57)
+val GCOLOR_PINK = Color.rgb(227, 86, 124)
+
+val colors: Array<Int> = arrayOf(
+    GCOLOR_BLUE,
+    GCOLOR_PURPLE,
+    GCOLOR_ORANGE,
+    GCOLOR_PINK,
+)
 
 fun generateShapeOffsets(base: Array<Coords>): Array<Array<Coords>> {
     fun center(offsets: Array<Coords>): Array<Coords> {
@@ -92,23 +111,6 @@ val shapes: Array<Array<Coords>> = arrayOf(
     *generateShapeOffsets(arrayOf(Coords(2, 0), Coords(2, 1), Coords(2, 2), Coords(2, 3))),
 )
 val SHAPES_INDICES = shapes.size / 4
-
-val GCOLOR_RED = Color.rgb(197, 40, 61)
-val GCOLOR_OVERLAPPING = Color.argb(200, Color.red(GCOLOR_RED), Color.green(GCOLOR_RED), Color.blue(GCOLOR_RED))
-val GCOLOR_YELLOW = Color.rgb(226, 239, 112)
-val GCOLOR_BLACK = Color.rgb(29, 32, 32)
-
-val GCOLOR_BLUE = Color.rgb(112, 228, 239)
-val GCOLOR_PURPLE = Color.rgb(203, 66, 159)
-val GCOLOR_ORANGE = Color.rgb(217, 93, 57)
-val GCOLOR_PINK = Color.rgb(227, 86, 124)
-
-val colors: Array<Int> = arrayOf(
-    GCOLOR_BLUE,
-    GCOLOR_PURPLE,
-    GCOLOR_ORANGE,
-    GCOLOR_PINK,
-)
 
 data class Rect(
     var x: Float = 0f,
@@ -196,10 +198,12 @@ class CountdownText(val paint: Paint, context: Context) {
 
 fun lerp(start: Float, end: Float, progress: Float): Float = start + (end - start) * progress
 fun lerp(start: Vec2, end: Vec2, progress: Float): Vec2 = start + (end - start) * progress
+fun lerp(start: Int, end: Int, progress: Float): Int = (start + (end - start) * progress).toInt()
 
 data class Animation<T>(
     var current: T,
     val duration: Float,
+    var delay: Float = 0f,
     val lerp: (start: T, end: T, progress: Float) -> T,
 ) {
     var animating = false
@@ -223,7 +227,12 @@ data class Animation<T>(
     fun update(elapsedTime: Float) {
         if (!animating) return
 
-        val progress = (elapsedTime - animationStartTime) / duration
+        val animatingTime = elapsedTime - animationStartTime
+        if (animatingTime < delay) {
+            return
+        }
+
+        val progress = (animatingTime - delay) / duration
         if (progress >= 1f) {
             current = animationEndValue
             animating = false
@@ -246,8 +255,8 @@ class CurrentShape(
     var coordsPrev = coords.copy()
     var overlapping = false
 
-    val movementAnimation = Animation(coords.toVec2(), SHAPE_MOVEMENT_ANIMATION_DURATION, ::lerp)
-    val rotationAnimation = Animation(rotation * 90f, SHAPE_MOVEMENT_ANIMATION_DURATION, ::lerp)
+    val movementAnimation = Animation(coords.toVec2(), SHAPE_MOVEMENT_ANIMATION_DURATION, lerp = ::lerp)
+    val rotationAnimation = Animation(rotation * 90f, SHAPE_MOVEMENT_ANIMATION_DURATION, lerp = ::lerp)
 
     fun beginMovementAnimation(elapsedTime: Float) {
         movementAnimation.begin(elapsedTime, coords.toVec2())
@@ -319,12 +328,14 @@ class ShapesBag {
 }
 
 data class Cell(
+    val idx: Int,
     var color: Int = 0,
     var filled: Boolean = false,
 ) {
-    val explosionAnim: Animation<Int> = Animation(
+    val chargeClrAnim: Animation<Int> = Animation(
         0,
-        EXPLOSION_ANIMATION_DURATION,
+        EXPLOSION_CHARGE_ANIMATION_DURATION,
+        delay = idx * 0.05f,
         lerp = { start, end, progress ->
             val r = lerp(Color.red(start).toFloat(), Color.red(end).toFloat(), progress).toInt()
             val g = lerp(Color.green(start).toFloat(), Color.green(end).toFloat(), progress).toInt()
@@ -332,10 +343,43 @@ data class Cell(
             Color.rgb(r, g, b)
         },
     )
+    val chargeSizeAnim: Animation<Float> = Animation(
+        0f,
+        EXPLOSION_CHARGE_ANIMATION_DURATION / EXPLOSION_CELL_PULSE_COUNT,
+        delay = idx * 0.05f,
+        lerp = ::lerp,
+    )
 
     fun beginExplosion(elapsedTime: Float) {
-        explosionAnim.current = color
-        explosionAnim.begin(elapsedTime, Color.WHITE)
+        chargeClrAnim.current = color
+        chargeClrAnim.begin(elapsedTime, Color.WHITE)
+
+        chargeSizeAnim.current = 1f
+        chargeSizeAnim.begin(elapsedTime, EXPLOSION_CELL_SCALE_MAX)
+    }
+
+    fun updateExplosion(elapsedTime: Float): Boolean {
+        chargeClrAnim.update(elapsedTime)
+
+        chargeSizeAnim.update(elapsedTime)
+        if (!chargeSizeAnim.animating) {
+            if (chargeSizeAnim.animationEndValue == EXPLOSION_CELL_SCALE_MAX) {
+                chargeSizeAnim.begin(elapsedTime, 1f)
+            } else {
+                chargeSizeAnim.begin(elapsedTime, EXPLOSION_CELL_SCALE_MAX)
+            }
+        }
+
+        return !chargeClrAnim.animating
+    }
+}
+
+class ExplosionAnimation {
+    var darken = Animation(0, EXPLOSION_CHARGE_ANIMATION_DURATION, lerp = ::lerp)
+
+    fun begin(elapsedTime: Float) {
+        darken.current = 0
+        darken.begin(elapsedTime, 240)
     }
 }
 
@@ -346,21 +390,44 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
     val paint = Paint()
     var pgRect = Rect()
     var pgPadding = 0f
+
     var state = GameState.Countdown
     var touch = Touch()
     var countdownText = CountdownText(paint, context)
+
+    val shapesBag = ShapesBag()
     var currentShape = CurrentShape(0)
     var cellSize = 0f
     var cellPadding = 0f
-    val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell() }
-    val shapesBag = ShapesBag()
+    val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell(it) }
+
+    val explosionAnim = ExplosionAnimation()
+
+    var pendingRotations = 0
+    var pendingPlacements = 0
+
     var score = 0
         set(value) {
             field = value
             onScoreChange(value)
         }
-    var pendingRotations = 0
-    var pendingPlacements = 0
+
+
+    // debug
+
+    fun debugFillRow() {
+        for (col in 0..<CELLS_COUNT - 1) {
+            val cell = cells[col]
+            cell.filled = true
+            cell.color = colors[0]
+        }
+    }
+
+    fun debugSpawnShape() {
+        currentShape = CurrentShape(0)
+    }
+
+    //
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -443,6 +510,7 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
         }
 
         if (animating) {
+            explosionAnim.begin(elapsedTime)
             state = GameState.AnimatingCellsExplosion
         }
     }
@@ -473,9 +541,13 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
     fun update(dt: Float) {
         when (state) {
             GameState.Countdown -> {
-                // if (countdownText.update(elapsedTime, pgRect)) {
-                state = GameState.Placing
-                // }
+                if (BuildConfig.DEBUG) {
+                    state = GameState.Placing
+                } else {
+                    if (countdownText.update(elapsedTime, pgRect)) {
+                        state = GameState.Placing
+                    }
+                }
             }
 
             GameState.Placing -> {
@@ -549,14 +621,15 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
             }
 
             GameState.AnimatingCellsExplosion -> {
+                explosionAnim.darken.update(elapsedTime)
+
                 var allDone = true
 
                 for (cellIdx in cells.indices) {
                     val cell = cells[cellIdx]
 
-                    if (cell.explosionAnim.animating) {
-                        cell.explosionAnim.update(elapsedTime)
-                        val done = !cell.explosionAnim.animating
+                    if (cell.chargeClrAnim.animating) {
+                        val done = cell.updateExplosion(elapsedTime)
                         if (done) {
                             cell.filled = false
                             score += 10
@@ -595,6 +668,8 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
     }
 
     fun render(canvas: Canvas) {
+        // playground
+        paint.reset()
         paint.color = GCOLOR_BLACK
         canvas.drawRoundRect(pgRect.rectf, dp(RADIUS), dp(RADIUS), paint)
 
@@ -605,14 +680,14 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                 if (!cells[idx].filled) {
                     continue
                 }
+                if (cells[idx].chargeClrAnim.animating) {
+                    continue
+                }
 
                 scratchCoords.col = idx % CELLS_COUNT
                 scratchCoords.row = idx / CELLS_COUNT
-                paint.color = if (cells[idx].explosionAnim.animating) {
-                    cells[idx].explosionAnim.current
-                } else {
-                    cells[idx].color
-                }
+
+                paint.color = cells[idx].color
                 renderCell(canvas, scratchCoords)
             }
         }
@@ -625,6 +700,7 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
             GameState.Placing, GameState.AnimatingCurrentShape -> {
                 assert(currentShape.shape < shapes.size)
 
+                // current shape
                 if (currentShape.shape != -1) {
                     paint.reset()
 
@@ -657,7 +733,44 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                 }
             }
 
-            GameState.AnimatingCellsExplosion -> {}
+            GameState.AnimatingCellsExplosion -> {
+                // explosion
+                paint.reset()
+                paint.color = Color.rgb(0, 0, 0)
+                paint.alpha = explosionAnim.darken.current
+                canvas.drawRoundRect(pgRect.rectf, dp(RADIUS), dp(RADIUS), paint)
+
+                // exploding cells
+                paint.reset()
+                val scratchCoords = Coords(0, 0)
+                for (idx in 0..<CELLS_COUNT * CELLS_COUNT) {
+                    val cell = cells[idx]
+                    if (!cell.chargeClrAnim.animating) {
+                        continue
+                    }
+
+                    scratchCoords.col = idx % CELLS_COUNT
+                    scratchCoords.row = idx / CELLS_COUNT
+
+                    // cell center
+                    var cellCenter = coordsToPos(scratchCoords.toVec2())
+                    cellCenter += cellSize / 2
+
+                    // scaled
+                    val scaledCellSize = cellSize * cell.chargeSizeAnim.current
+                    val cellx = cellCenter.x - scaledCellSize / 2
+                    val celly = cellCenter.y - scaledCellSize / 2
+
+                    paint.color = cell.chargeClrAnim.current
+                    val p = cellPadding
+                    val r = dp(RADIUS) - p
+                    canvas.drawRoundRect(
+                        cellx + p, celly + p, cellx + scaledCellSize - p, celly + scaledCellSize - p,
+                        r, r,
+                        paint,
+                    )
+                }
+            }
         }
     }
 
