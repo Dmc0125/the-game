@@ -16,7 +16,7 @@ import kotlin.math.ceil
 import kotlin.random.Random
 
 const val CELLS_COUNT = 15
-const val CELL_PADDING_FRACTION = 0.1f
+const val CELL_PADDING_FRACTION = 0.075f
 const val PLAYGROUND_PADDING_FRACTION = 0.02f
 const val DRAG_SENSITIVITY = 1.75f
 const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
@@ -31,7 +31,7 @@ const val PARTICLE_COUNT_PER_CELL = 10
 val GCOLOR_RED = Color.rgb(197, 40, 61)
 val GCOLOR_OVERLAPPING = Color.argb(200, Color.red(GCOLOR_RED), Color.green(GCOLOR_RED), Color.blue(GCOLOR_RED))
 val GCOLOR_YELLOW = Color.rgb(226, 239, 112)
-val GCOLOR_BLACK = Color.rgb(29, 32, 32)
+val GCOLOR_BLACK = Color.rgb(39, 43, 43)
 
 val GCOLOR_BLUE = Color.rgb(112, 228, 239)
 val GCOLOR_PURPLE = Color.rgb(203, 66, 159)
@@ -320,12 +320,53 @@ class CurrentShape(
 
 class ShapesBag {
     var current = -1
-    val indexes = IntArray(shapes.size / 4) { it }
+    val bagSize = shapes.size / 4
+    val indexes = IntArray(bagSize * 2)
+
+    init {
+        for (bag in 0..<2) {
+            for (i in 0..<bagSize) {
+                indexes[bag * bagSize + i] = i
+            }
+        }
+    }
+}
+
+fun IntArray.shuffleRange(from: Int, to: Int, random: Random = Random.Default) {
+    require(from in indices) { "from index out of bounds; from=$from, size=$size" }
+    require(to in from..size) { "to index out of bounds; to=$to, size=$size" }
+
+    for (i in to - 1 downTo from + 1) {
+        val j = random.nextInt(from, i + 1)
+        val temp = this[i]
+        this[i] = this[j]
+        this[j] = temp
+    }
+}
+
+fun ShapesBag.peek(): Int {
+    assert(current != -1) { "peek called before next" }
+    if (current == bagSize * 2) {
+        return indexes[0]
+    }
+    return indexes[current]
 }
 
 fun ShapesBag.next(): Int {
-    if (current == indexes.size || current == -1) {
-        indexes.shuffle()
+    if (current == -1) {
+        // init
+        indexes.shuffleRange(0, bagSize)
+        indexes.shuffleRange(bagSize, bagSize * 2)
+        current = 0
+    }
+
+    if (current == bagSize) {
+        // shuffle first bag when we enter the second bag
+        indexes.shuffleRange(0, bagSize)
+    }
+    if (current == bagSize * 2) {
+        // shuffle second bag when we enter the first bag
+        indexes.shuffleRange(bagSize, bagSize * 2)
         current = 0
     }
 
@@ -524,6 +565,7 @@ class GameContext {
 
     val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell(this, it) }
     var state: GameState = GameState.Countdown
+    val shapesBag = ShapesBag()
     var currentShape = CurrentShape()
 
     val screenShake = ScreenShake(this)
@@ -652,7 +694,34 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
     }
 }
 
-class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(context) {
+fun checkOverTheEdge(newCoords: Coords, cellsOffsets: Array<Coords>): Coords {
+    var minCol = Int.MAX_VALUE
+    var maxCol = Int.MIN_VALUE
+    var minRow = Int.MAX_VALUE
+    var maxRow = Int.MIN_VALUE
+
+    for (cellOffsets in cellsOffsets) {
+        val cellCoords = newCoords + cellOffsets
+        minCol = kotlin.math.min(minCol, cellCoords.col)
+        maxCol = kotlin.math.max(maxCol, cellCoords.col)
+        minRow = kotlin.math.min(minRow, cellCoords.row)
+        maxRow = kotlin.math.max(maxRow, cellCoords.row)
+    }
+
+    val offsets = Coords(0, 0)
+    if (minCol < 0) offsets.col -= minCol
+    if (maxCol >= CELLS_COUNT) offsets.col -= (maxCol - CELLS_COUNT + 1)
+    if (minRow < 0) offsets.row -= minRow
+    if (maxRow >= CELLS_COUNT) offsets.row -= (maxRow - CELLS_COUNT + 1)
+
+    return offsets
+}
+
+class GameView(
+    context: Context,
+    val onScoreChange: (Int) -> Unit,
+    val onNextShape: (Int) -> Unit,
+) : View(context) {
     var running = false
     var lastFrameTime = 0L
     val paint = Paint()
@@ -663,7 +732,6 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
     var countdownText = CountdownText(paint, context)
 
     val ctx = GameContext()
-    val shapesBag = ShapesBag()
 
     var score = 0
         set(value) {
@@ -706,30 +774,6 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
         }
     }
 
-
-    fun checkOverTheEdge(newCoords: Coords, cellsOffsets: Array<Coords>): Coords {
-        var minCol = Int.MAX_VALUE
-        var maxCol = Int.MIN_VALUE
-        var minRow = Int.MAX_VALUE
-        var maxRow = Int.MIN_VALUE
-
-        for (cellOffsets in cellsOffsets) {
-            val cellCoords = newCoords + cellOffsets
-            minCol = kotlin.math.min(minCol, cellCoords.col)
-            maxCol = kotlin.math.max(maxCol, cellCoords.col)
-            minRow = kotlin.math.min(minRow, cellCoords.row)
-            maxRow = kotlin.math.max(maxRow, cellCoords.row)
-        }
-
-        val offsets = Coords(0, 0)
-        if (minCol < 0) offsets.col -= minCol
-        if (maxCol >= CELLS_COUNT) offsets.col -= (maxCol - CELLS_COUNT + 1)
-        if (minRow < 0) offsets.row -= minRow
-        if (maxRow >= CELLS_COUNT) offsets.row -= (maxRow - CELLS_COUNT + 1)
-
-        return offsets
-    }
-
     fun update() {
         when (ctx.state) {
             GameState.Countdown -> {
@@ -744,8 +788,14 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
 
             GameState.Placing -> {
                 if (ctx.currentShape.shape == -1) {
-                    ctx.currentShape = CurrentShape(shapesBag.next())
+                    val shapeIdx = ctx.shapesBag.next()
+                    val nextShapeIdx = ctx.shapesBag.peek()
+
+                    ctx.currentShape = CurrentShape(shapeIdx)
+                    onNextShape(nextShapeIdx)
+
                     ctx.currentShape.checkOverlap(ctx.cells)
+
                     pendingRotations = false
                     pendingPlacements = false
                 }
@@ -1049,5 +1099,101 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
 
     fun handlePlace() {
         pendingPlacements = true
+    }
+}
+
+class NextShapeView(ctx: Context) : View(ctx) {
+    val radiusFraction = 0.15f
+    val maxCellSize = 49f
+    val rectPaddingFraction = 0.1f
+
+    var rect = Rect()
+    var innerRect = Rect()
+
+    val paint = Paint()
+    var cellSize = 0f
+    var shape: Array<Coords>? = null
+
+    var minCol = Int.MAX_VALUE
+    var minRow = Int.MAX_VALUE
+    var totalWidth = 0f
+    var totalHeight = 0f
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+
+        val wf = w.toFloat()
+        val hf = h.toFloat()
+
+        rect = Rect(0f, 0f, wf, hf)
+        val padding = rect.width * rectPaddingFraction
+        innerRect = Rect(padding, padding, rect.width - padding, rect.height - padding)
+    }
+
+    fun onNextShape(shapeIdx: Int) {
+        shape = shapes[shapeRotationIndex(shapeIdx, 0)]
+    }
+
+    fun update() {
+        if (shape == null) return
+
+        minCol = Int.MAX_VALUE
+        var maxCol = Int.MIN_VALUE
+        minRow = Int.MAX_VALUE
+        var maxRow = Int.MIN_VALUE
+
+        for (cell in shape) {
+            minCol = kotlin.math.min(minCol, cell.col)
+            maxCol = kotlin.math.max(maxCol, cell.col)
+            minRow = kotlin.math.min(minRow, cell.row)
+            maxRow = kotlin.math.max(maxRow, cell.row)
+        }
+
+        val cols = maxCol - minCol + 1
+        val rows = maxRow - minRow + 1
+
+        cellSize = minOf(
+            innerRect.width / cols.toFloat(),
+            innerRect.height / rows.toFloat(),
+            maxCellSize,
+        )
+
+        totalWidth = cols * cellSize
+        totalHeight = rows * cellSize
+    }
+
+    fun render(canvas: Canvas) {
+        if (shape != null) {
+            paint.reset()
+            paint.color = colors[0]
+
+            val left = innerRect.x + (innerRect.width - totalWidth) / 2f
+            val top = innerRect.y + (innerRect.height - totalHeight) / 2f
+
+            for (cell in shape) {
+                val (col, row) = cell
+
+                var x = left + (col - minCol) * cellSize
+                var y = top + (row - minRow) * cellSize
+
+                val padding = cellSize * 0.05f
+                val radius = cellSize * radiusFraction
+
+                canvas.drawRoundRect(
+                    x + padding,
+                    y + padding,
+                    x + cellSize - padding,
+                    y + cellSize - padding,
+                    radius, radius,
+                    paint,
+                )
+            }
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        update()
+        render(canvas)
+        postInvalidateOnAnimation()
     }
 }

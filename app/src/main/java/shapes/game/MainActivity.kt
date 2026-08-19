@@ -17,8 +17,10 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -53,6 +55,7 @@ import shapes.game.R
 
 val COLOR_BLUE = Color(112, 228, 239)
 val COLOR_YELLOW = Color(226, 239, 112)
+val COLOR_BLACK = Color(39, 43, 43)
 const val RADIUS = 8f
 
 class MainActivity : ComponentActivity() {
@@ -130,10 +133,15 @@ fun Modifier.neobrutalistShadow(
 @Composable
 fun GameScreen() {
     val gameView = remember { mutableStateOf<GameView?>(null) }
+    val nextShapeView = remember { mutableStateOf<NextShapeView?>(null) }
     val score = remember { mutableStateOf(0) }
 
     fun onScoreChange(newScore: Int) {
         score.value = newScore
+    }
+
+    fun onNextShape(shapeIdx: Int) {
+        nextShapeView.value?.onNextShape(shapeIdx)
     }
 
     Column(
@@ -161,33 +169,95 @@ fun GameScreen() {
             },
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Box(
+        val height = 90.dp
+        val verticalPadding = 12.dp
+
+        Row(
             Modifier
                 .fillMaxWidth()
+                .height(height)
                 .neobrutalistShadow()
-                .clip(RoundedCornerShape(RADIUS.dp))
-                .background(Color.White)
-                .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
-                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .background(Color.White, RoundedCornerShape(RADIUS.dp))
+                .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp)),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            val score = "%05d".format(score.value)
-            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Column(
+                modifier = Modifier
+                    .padding(start = 20.dp, top = verticalPadding, bottom = verticalPadding)
+                    .fillMaxHeight(),
+            ) {
                 BasicText(
-                    text = "Score",
+                    text = "SCORE",
                     style = TextStyle(
                         fontSize = 16.sp,
-                        fontFamily = AppFont.famRegular,
-                        color = Color.Black,
-                    ),
-                )
-                BasicText(
-                    text = score,
-                    style = TextStyle(
-                        fontSize = 32.sp,
                         fontFamily = AppFont.famMonoMedium,
                         color = Color.Black,
                     ),
                 )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight(),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    val score = "%06d".format(score.value)
+
+                    BasicText(
+                        text = score,
+                        style = TextStyle(
+                            fontSize = 40.sp,
+                            fontFamily = AppFont.famMonoMedium,
+                            color = Color.Black,
+                        ),
+                    )
+                }
+            }
+
+            Column(
+                Modifier
+                    .fillMaxHeight()
+                    .aspectRatio(1f)
+                    .background(
+                        COLOR_BLACK, RoundedCornerShape(
+                            topStart = 0.dp,
+                            topEnd = RADIUS.dp,
+                            bottomStart = 0.dp,
+                            bottomEnd = RADIUS.dp,
+                        )
+                    )
+                    .drawBehind {
+                        val width = 3.dp.toPx()
+                        drawLine(
+                            color = Color.Black,
+                            start = Offset(0f, 0f),
+                            end = Offset(0f, size.height),
+                            strokeWidth = width,
+                        )
+                    }
+                    .padding(verticalPadding),
+            ) {
+                BasicText(
+                    text = "NEXT",
+                    style = TextStyle(
+                        fontSize = 16.sp,
+                        fontFamily = AppFont.famMonoMedium,
+                        color = Color.White,
+                    ),
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxHeight().aspectRatio(1f),
+                        factory = { context ->
+                            NextShapeView(context).also {
+                                nextShapeView.value = it
+                            }
+                        }
+                    )
+                }
             }
         }
 
@@ -195,9 +265,12 @@ fun GameScreen() {
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .neobrutalistShadow(),
+                .neobrutalistShadow()
+                .graphicsLayer {
+                    clip = false
+                },
             factory = { context ->
-                GameView(context, ::onScoreChange).also {
+                GameView(context, ::onScoreChange, ::onNextShape).also {
                     gameView.value = it
                     it.resume()
                 }
@@ -309,8 +382,7 @@ fun Button(
                 offsetX = 6.dp - animTranslation,
                 offsetY = 6.dp - animTranslation,
             )
-            .clip(RoundedCornerShape(RADIUS.dp))
-            .background(backgroundColor)
+            .background(backgroundColor, RoundedCornerShape(RADIUS.dp))
             .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
             .padding(horizontal = paddingHorizontal, vertical = paddingVertical),
         contentAlignment = Alignment.Center,
