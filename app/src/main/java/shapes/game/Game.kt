@@ -20,9 +20,13 @@ const val CELL_PADDING_FRACTION = 0.1f
 const val PLAYGROUND_PADDING_FRACTION = 0.02f
 const val DRAG_SENSITIVITY = 1.75f
 const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
-const val EXPLOSION_CHARGE_ANIMATION_DURATION = 0.5f
-const val EXPLOSION_CELL_PULSE_COUNT = 5
-const val EXPLOSION_CELL_SCALE_MAX = 1.1f
+const val EXPLOSION_CHARGE_ANIMATION_DURATION = 0.22f
+const val EXPLOSION_CELL_PULSE_COUNT = 4
+const val EXPLOSION_CELL_SCALE_MAX = 1.35f
+const val EXPLOSION_CELL_SCALE_MIN = 0.9f
+const val EXPLOSION_PARTICLE_LIFESPAN = 0.6f
+const val EXPLOSION_DELAY = 0.01f
+const val PARTICLE_COUNT_PER_CELL = 10
 
 val GCOLOR_RED = Color.rgb(197, 40, 61)
 val GCOLOR_OVERLAPPING = Color.argb(200, Color.red(GCOLOR_RED), Color.green(GCOLOR_RED), Color.blue(GCOLOR_RED))
@@ -317,39 +321,38 @@ class CurrentShape(
 class ShapesBag {
     var current = -1
     val indexes = IntArray(shapes.size / 4) { it }
-
-    fun next(): Int {
-        if (current == indexes.size || current == -1) {
-            indexes.shuffle()
-            current = 0
-        }
-
-        val c = indexes[current]
-        current += 1
-        return c
-    }
 }
+
+fun ShapesBag.next(): Int {
+    if (current == indexes.size || current == -1) {
+        indexes.shuffle()
+        current = 0
+    }
+
+    val c = indexes[current]
+    current += 1
+    return c
+}
+
 
 data class Particle(
     val ctx: GameContext,
-    val idx: Int,
 ) {
     // config
     val startPosition = Vec2(0f, 0f)
-    var defaultSpeed = 0f
-    val lifespan = 0.5f
+    var distance = 0f
 
     // computed
+    var alpha = 255
     var currentPosition = Vec2(0f, 0f)
-    var currentSpeed = Vec2(0f, 0f)
-    var speed = Vec2(0f, 0f)
+    val endPosition = Vec2(0f, 0f)
     var spawnTime = 0f
 }
 
-fun Particle.init() {
+fun Particle.init(cellIdx: Int) {
     // center of the cell
-    val col = idx % CELLS_COUNT
-    val row = idx / CELLS_COUNT
+    val col = cellIdx % CELLS_COUNT
+    val row = cellIdx / CELLS_COUNT
 
     val x = ctx.pgPadding + col * ctx.cellSize
     val y = ctx.pgPadding + row * ctx.cellSize
@@ -357,24 +360,24 @@ fun Particle.init() {
     startPosition.x = x + ctx.cellSize / 2f
     startPosition.y = y + ctx.cellSize / 2f
 
-    defaultSpeed = (0.8f + Random.nextFloat() * 0.2f) * (ctx.cellSize * 7) // pixels per second
+    // TODO: make this bigger based on multi fill
+    val maxDistance = ctx.cellSize * 7
+    distance = (0.8f + Random.nextFloat() * 0.2f) * maxDistance
 }
 
 fun Particle.spawn() {
     spawnTime = ctx.elapsedTime
 
+    alpha = 255
     currentPosition = startPosition.copy()
 
     val angle = Random.nextFloat() * (2f * PI.toFloat())
-    speed.x = defaultSpeed * kotlin.math.cos(angle)
-    speed.y = defaultSpeed * kotlin.math.sin(angle)
-
-    currentSpeed.x = speed.x
-    currentSpeed.y = speed.y
+    endPosition.x = startPosition.x + distance * kotlin.math.cos(angle)
+    endPosition.y = startPosition.y + distance * kotlin.math.sin(angle)
 }
 
 fun Particle.dead(): Boolean {
-    return ctx.elapsedTime - spawnTime > lifespan
+    return ctx.elapsedTime - spawnTime > EXPLOSION_PARTICLE_LIFESPAN
 }
 
 fun Particle.update(): Boolean {
@@ -383,11 +386,15 @@ fun Particle.update(): Boolean {
     }
 
     val age = ctx.elapsedTime - spawnTime
-    val remainingFraction = (1f - age / lifespan).coerceIn(0f, 1f)
+    val fraction = kotlin.math.min(1f, age / EXPLOSION_PARTICLE_LIFESPAN)
 
-    currentSpeed = speed * remainingFraction
-    currentPosition += currentSpeed * ctx.dt
+    if (fraction > 0.5f) {
+        val alphaFraction = (fraction - 0.5f) / 0.5f
+        alpha = ((1 - alphaFraction) * 255).toInt()
+    }
 
+    val p = 1 - fraction
+    currentPosition = lerp(startPosition, endPosition, 1 - p * p)
     return false
 }
 
@@ -397,79 +404,112 @@ data class Cell(
     var color: Int = 0,
     var filled: Boolean = false,
 ) {
-    val chargeClrAnim: Animation<Int> = Animation(
-        0,
-        EXPLOSION_CHARGE_ANIMATION_DURATION,
-        delay = idx * 0.05f,
-        lerp = { start, end, progress ->
-            val r = lerp(Color.red(start).toFloat(), Color.red(end).toFloat(), progress).toInt()
-            val g = lerp(Color.green(start).toFloat(), Color.green(end).toFloat(), progress).toInt()
-            val b = lerp(Color.blue(start).toFloat(), Color.blue(end).toFloat(), progress).toInt()
-            Color.rgb(r, g, b)
-        },
-    )
-    val chargeSizeAnim: Animation<Float> = Animation(
-        0f,
-        EXPLOSION_CHARGE_ANIMATION_DURATION / EXPLOSION_CELL_PULSE_COUNT,
-        delay = idx * 0.05f,
-        lerp = ::lerp,
-    )
+    var filledAt = 0f
+
+    val chargeAlphaAnim = Animation(0, EXPLOSION_CHARGE_ANIMATION_DURATION, lerp = ::lerp)
+
+    val pulsePhaseDuration = EXPLOSION_CHARGE_ANIMATION_DURATION / EXPLOSION_CELL_PULSE_COUNT / 2
+    val pulseGrowTo = EXPLOSION_CELL_SCALE_MAX
+    val pulseShrinkTo = EXPLOSION_CELL_SCALE_MIN
+    val pulseGrowAnim = Animation(0f, pulsePhaseDuration, lerp = ::lerp)
+    val pulseShrinkAnim = Animation(0f, pulsePhaseDuration, lerp = ::lerp)
+
     var particlesAnimating = false
-    val particles = Array(10) { Particle(ctx, idx) }
+    val particles = Array(PARTICLE_COUNT_PER_CELL) { Particle(ctx) }
     var explosionAnimating = false
-
-    fun beginExplosion(elapsedTime: Float) {
-        chargeClrAnim.current = color
-        chargeClrAnim.begin(elapsedTime, Color.WHITE)
-
-        chargeSizeAnim.current = 1f
-        chargeSizeAnim.begin(elapsedTime, EXPLOSION_CELL_SCALE_MAX)
-
-        explosionAnimating = true
-    }
-
-    fun updateExplosion(elapsedTime: Float): Boolean {
-        chargeClrAnim.update(elapsedTime)
-
-        if (chargeClrAnim.animating) {
-            chargeSizeAnim.update(elapsedTime)
-            if (!chargeSizeAnim.animating) {
-                if (chargeSizeAnim.animationEndValue == EXPLOSION_CELL_SCALE_MAX) {
-                    chargeSizeAnim.begin(elapsedTime, 1f)
-                } else {
-                    chargeSizeAnim.begin(elapsedTime, EXPLOSION_CELL_SCALE_MAX)
-                }
-            }
-        }
-
-        if (!chargeClrAnim.animating) {
-            if (!particlesAnimating) {
-                particlesAnimating = true
-                for (particle in particles) {
-                    particle.spawn()
-                }
-            } else {
-                particlesAnimating = true
-                for (particle in particles) {
-                    val done = particle.update()
-                    if (done) {
-                        particlesAnimating = false
-                    }
-                }
-            }
-            explosionAnimating = particlesAnimating
-        }
-
-        return !explosionAnimating
-    }
 }
 
-class ExplosionAnimation {
-    var darken = Animation(0, EXPLOSION_CHARGE_ANIMATION_DURATION, lerp = ::lerp)
+fun Cell.beginExplosion(elapsedTime: Float, delay: Float) {
+    chargeAlphaAnim.delay = delay
+    chargeAlphaAnim.current = 0
+    chargeAlphaAnim.begin(elapsedTime, 255)
 
-    fun begin(elapsedTime: Float) {
-        darken.current = 0
-        darken.begin(elapsedTime, 240)
+    pulseGrowAnim.delay = delay
+    pulseGrowAnim.current = 1f
+    pulseGrowAnim.begin(elapsedTime, pulseGrowTo)
+
+    pulseShrinkAnim.delay = delay + pulsePhaseDuration
+    pulseShrinkAnim.current = pulseGrowTo
+    pulseShrinkAnim.begin(elapsedTime, pulseShrinkTo)
+
+    explosionAnimating = true
+}
+
+fun Cell.currentScale(): Float = if (pulseGrowAnim.animating) {
+    pulseGrowAnim.current
+} else {
+    pulseShrinkAnim.current
+}
+
+fun Cell.updateExplosion(elapsedTime: Float): Boolean {
+    chargeAlphaAnim.update(elapsedTime)
+
+    if (chargeAlphaAnim.animating) {
+        pulseGrowAnim.update(elapsedTime)
+        pulseShrinkAnim.update(elapsedTime)
+
+        if (!pulseShrinkAnim.animating) {
+            pulseGrowAnim.delay = 0f
+            pulseGrowAnim.current = pulseShrinkAnim.current
+            pulseGrowAnim.begin(elapsedTime, pulseGrowTo)
+            pulseShrinkAnim.delay = pulsePhaseDuration
+            pulseShrinkAnim.current = pulseGrowTo
+            pulseShrinkAnim.begin(elapsedTime, pulseShrinkTo)
+        }
+    }
+
+    if (!chargeAlphaAnim.animating) {
+        if (!particlesAnimating) {
+            particlesAnimating = true
+            for (particle in particles) {
+                particle.spawn()
+            }
+        } else {
+            particlesAnimating = true
+            for (particle in particles) {
+                val done = particle.update()
+                if (done) {
+                    particlesAnimating = false
+                }
+            }
+        }
+        explosionAnimating = particlesAnimating
+    }
+
+    return !explosionAnimating
+}
+
+class ScreenShake(val ctx: GameContext) {
+    val delay = EXPLOSION_CHARGE_ANIMATION_DURATION
+    var startTime = 0f
+    var duration = 0f
+    var magnitude = 0f
+    val offset = Vec2(0f, 0f)
+    var animating = false
+
+    fun begin(magnitude: Float, duration: Float) {
+        this.magnitude = magnitude
+        this.duration = duration
+        startTime = ctx.elapsedTime
+        animating = true
+    }
+
+    fun update() {
+        val ageWithDelay = ctx.elapsedTime - startTime
+        val age = ageWithDelay - delay
+
+        if (age > duration) {
+            animating = false
+            return
+        }
+
+        if (ageWithDelay < delay) {
+            return
+        }
+
+        val strength = magnitude * (1f - age / duration)
+        offset.x = kotlin.math.sin(age * 73f) * strength
+        offset.y = kotlin.math.sin(age * 109f + 1.2f) * strength
     }
 }
 
@@ -481,6 +521,135 @@ class GameContext {
     var pgPadding = 0f
     var cellSize = 0f
     var cellPadding = 0f
+
+    val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell(this, it) }
+    var state: GameState = GameState.Countdown
+    var currentShape = CurrentShape()
+
+    val screenShake = ScreenShake(this)
+}
+
+fun coordsToIdx(col: Int, row: Int): Int {
+    return col + row * CELLS_COUNT
+}
+
+fun placeShapeAndBeginExplosion(ctx: GameContext) {
+    // place
+    for (cellCoords in ctx.currentShape.cells()) {
+        val idx = cellCoords.col + cellCoords.row * CELLS_COUNT
+        val cell = ctx.cells[idx]
+        cell.filled = true
+        cell.filledAt = ctx.elapsedTime
+        cell.color = ctx.currentShape.color
+    }
+
+    ctx.currentShape.shape = -1
+
+    // begin explosion
+
+    val filledRows = IntArray(CELLS_COUNT) { -1 }
+    val filledCols = IntArray(CELLS_COUNT) { -1 }
+
+    data class Result(
+        val fixedCoord: Int,
+        var filled: Boolean = true,
+        var start: Int = -1,
+        var prevFillTime: Float = 0f,
+        val coordsToIdx: (fixedCoord: Int, movingCoord: Int) -> Int,
+    )
+
+    fun Result.process(movingCoord: Int) {
+        val idx = coordsToIdx(fixedCoord, movingCoord)
+        val cell = ctx.cells[idx]
+        if (!cell.filled) {
+            filled = false
+        }
+        if (prevFillTime < cell.filledAt) {
+            prevFillTime = cell.filledAt
+            start = movingCoord
+        }
+    }
+
+    fun Result.beingExplosion(elapsedTime: Float): Float {
+        // first
+        run {
+            val idx = coordsToIdx(fixedCoord, start)
+            val cell = ctx.cells[idx]
+            cell.beginExplosion(elapsedTime, 0f)
+        }
+
+        // delays
+        var offset = 1
+        while (true) {
+            val preCoord = start - offset
+            val postCoord = start + offset
+
+            if (preCoord < 0 && postCoord >= CELLS_COUNT) {
+                break
+            }
+
+            val delay = offset * EXPLOSION_DELAY
+
+            if (preCoord >= 0) {
+                val idx = coordsToIdx(fixedCoord, preCoord)
+                val left = ctx.cells[idx]
+                left.beginExplosion(elapsedTime, delay)
+            }
+
+            if (postCoord < CELLS_COUNT) {
+                val right = ctx.cells[coordsToIdx(fixedCoord, postCoord)]
+                right.beginExplosion(elapsedTime, delay)
+            }
+
+            offset += 1
+        }
+
+        val maxDelay = (offset - 1) * EXPLOSION_DELAY
+        return maxDelay
+    }
+
+    var animating = false
+    var maxDelay = 0f
+
+    for (i in 0..<CELLS_COUNT) {
+        // row -> i = row, j = col
+        val rowResult = Result(i) { row, col ->
+            row * CELLS_COUNT + col
+        }
+        // col -> i = col, j = row
+        val colResult = Result(i) { col, row ->
+            row * CELLS_COUNT + col
+        }
+
+        for (j in 0..<CELLS_COUNT) {
+            if (!rowResult.filled && !colResult.filled) {
+                break
+            }
+
+            if (rowResult.filled) rowResult.process(j)
+            if (colResult.filled) colResult.process(j)
+        }
+
+
+        if (rowResult.filled) {
+            // begin
+            animating = true
+            maxDelay = kotlin.math.max(maxDelay, rowResult.beingExplosion(ctx.elapsedTime))
+        }
+
+        if (colResult.filled) {
+            // begin
+            animating = true
+            maxDelay = kotlin.math.max(maxDelay, colResult.beingExplosion(ctx.elapsedTime))
+        }
+    }
+
+    if (animating) {
+        val screenShakeDuration = maxDelay + EXPLOSION_PARTICLE_LIFESPAN
+        ctx.screenShake.begin(10f, screenShakeDuration)
+
+        ctx.state = GameState.AnimatingCellsExplosion
+    }
 }
 
 class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(context) {
@@ -488,20 +657,13 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
     var lastFrameTime = 0L
     val paint = Paint()
 
-    val ctx = GameContext()
-
-    var state = GameState.Countdown
     var touch = Touch()
-    var countdownText = CountdownText(paint, context)
-
-    val shapesBag = ShapesBag()
-    var currentShape = CurrentShape(0)
-    val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell(ctx, it) }
-
-    val explosionAnim = ExplosionAnimation()
-
     var pendingRotations = false
     var pendingPlacements = false
+    var countdownText = CountdownText(paint, context)
+
+    val ctx = GameContext()
+    val shapesBag = ShapesBag()
 
     var score = 0
         set(value) {
@@ -513,14 +675,14 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
 
     fun debugFillRow() {
         for (col in 0..<CELLS_COUNT - 1) {
-            val cell = cells[col]
+            val cell = ctx.cells[col + CELLS_COUNT]
             cell.filled = true
             cell.color = colors[0]
         }
     }
 
     fun debugSpawnShape() {
-        currentShape = CurrentShape(0)
+        ctx.currentShape = CurrentShape(0)
     }
 
     //
@@ -537,86 +699,13 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
         ctx.cellSize = (wf - ctx.pgPadding * 2) / CELLS_COUNT
         ctx.cellPadding = ctx.cellSize * CELL_PADDING_FRACTION
 
-        for (cell in cells) {
+        for (cell in ctx.cells) {
             for (particle in cell.particles) {
-                particle.init()
+                particle.init(cell.idx)
             }
         }
     }
 
-    fun placeShapeAndBeginExplosion() {
-        // place
-        for (cellCoords in currentShape.cells()) {
-            val idx = cellCoords.col + cellCoords.row * CELLS_COUNT
-            val cell = cells[idx]
-            cell.filled = true
-            cell.color = currentShape.color
-        }
-
-        currentShape.shape = -1
-
-        // begin explosion
-
-        val filledRows = BooleanArray(CELLS_COUNT) { false }
-        val filledCols = BooleanArray(CELLS_COUNT) { false }
-
-        for (row in 0..<CELLS_COUNT) {
-            var filled = true
-            for (col in 0..<CELLS_COUNT) {
-                val idx = col + row * CELLS_COUNT
-                if (!cells[idx].filled) {
-                    filled = false
-                    break
-                }
-            }
-            if (filled) {
-                filledRows[row] = true
-            }
-        }
-
-        for (col in 0..<CELLS_COUNT) {
-            var filled = true
-            for (row in 0..<CELLS_COUNT) {
-                val idx = col + row * CELLS_COUNT
-                if (!cells[idx].filled) {
-                    filled = false
-                    break
-                }
-            }
-            if (filled) {
-                filledCols[col] = true
-            }
-        }
-
-        var animating = false
-
-        for (row in 0..<CELLS_COUNT) {
-            if (filledRows[row]) {
-                for (col in 0..<CELLS_COUNT) {
-                    val idx = col + row * CELLS_COUNT
-                    cells[idx].beginExplosion(ctx.elapsedTime)
-                    animating = true
-                }
-            }
-        }
-
-        for (col in 0..<CELLS_COUNT) {
-            if (filledCols[col]) {
-                for (row in 0..<CELLS_COUNT) {
-                    val idx = col + row * CELLS_COUNT
-                    if (cells[idx].filled) {
-                        cells[idx].beginExplosion(ctx.elapsedTime)
-                        animating = true
-                    }
-                }
-            }
-        }
-
-        if (animating) {
-            explosionAnim.begin(ctx.elapsedTime)
-            state = GameState.AnimatingCellsExplosion
-        }
-    }
 
     fun checkOverTheEdge(newCoords: Coords, cellsOffsets: Array<Coords>): Coords {
         var minCol = Int.MAX_VALUE
@@ -641,97 +730,95 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
         return offsets
     }
 
-    fun update(dt: Float) {
-        when (state) {
+    fun update() {
+        when (ctx.state) {
             GameState.Countdown -> {
                 if (BuildConfig.DEBUG) {
-                    state = GameState.Placing
+                    ctx.state = GameState.Placing
                 } else {
                     if (countdownText.update(ctx.elapsedTime, ctx.pgRect)) {
-                        state = GameState.Placing
+                        ctx.state = GameState.Placing
                     }
                 }
             }
 
             GameState.Placing -> {
-                if (currentShape.shape == -1) {
-                    currentShape = CurrentShape(shapesBag.next())
-                    currentShape.checkOverlap(cells)
+                if (ctx.currentShape.shape == -1) {
+                    ctx.currentShape = CurrentShape(shapesBag.next())
+                    ctx.currentShape.checkOverlap(ctx.cells)
                     pendingRotations = false
                     pendingPlacements = false
                 }
 
                 if (pendingRotations) {
-                    val newRotation = currentShape.rotation + 1
-                    val newShapeIdx = shapeRotationIndex(currentShape.shape, newRotation)
+                    val newRotation = ctx.currentShape.rotation + 1
+                    val newShapeIdx = shapeRotationIndex(ctx.currentShape.shape, newRotation)
                     val newOffsets = shapes[newShapeIdx]
-                    val kicks = checkOverTheEdge(currentShape.coords, newOffsets)
+                    val kicks = checkOverTheEdge(ctx.currentShape.coords, newOffsets)
 
-                    currentShape.rotation = newRotation
+                    ctx.currentShape.rotation = newRotation
 
                     if (kicks.col != 0 || kicks.row != 0) {
-                        currentShape.coords += kicks
-                        currentShape.beginMovementAnimation(ctx.elapsedTime)
+                        ctx.currentShape.coords += kicks
+                        ctx.currentShape.beginMovementAnimation(ctx.elapsedTime)
                     }
 
-                    currentShape.checkOverlap(cells)
-                    currentShape.beginRotationAnimation(ctx.elapsedTime)
+                    ctx.currentShape.checkOverlap(ctx.cells)
+                    ctx.currentShape.beginRotationAnimation(ctx.elapsedTime)
 
                     pendingRotations = false
                 }
 
                 if (pendingPlacements) {
-                    if (!currentShape.overlapping) {
-                        if (!currentShape.movementAnimation.animating) {
-                            placeShapeAndBeginExplosion()
+                    if (!ctx.currentShape.overlapping) {
+                        if (!ctx.currentShape.movementAnimation.animating) {
+                            placeShapeAndBeginExplosion(ctx)
                         } else {
-                            state = GameState.AnimatingCurrentShape
+                            ctx.state = GameState.AnimatingCurrentShape
                         }
                     }
                     pendingPlacements = false
                 }
 
-                if (!currentShape.dragging && touch.isDown) {
-                    currentShape.dragging = true
-                } else if (currentShape.dragging) {
+                if (!ctx.currentShape.dragging && touch.isDown) {
+                    ctx.currentShape.dragging = true
+                } else if (ctx.currentShape.dragging) {
                     if (!touch.isDown) {
-                        currentShape.dragging = false
-                        currentShape.coordsPrev = currentShape.coords.copy()
+                        ctx.currentShape.dragging = false
+                        ctx.currentShape.coordsPrev = ctx.currentShape.coords.copy()
                     } else {
                         val diff = touch.position - touch.startPosition
                         val colsDiff = (diff / ctx.cellSize) * DRAG_SENSITIVITY
-                        var newCoords = currentShape.coordsPrev + colsDiff.toCoords()
+                        var newCoords = ctx.currentShape.coordsPrev + colsDiff.toCoords()
 
-                        val shapeIdx = shapeRotationIndex(currentShape.shape, currentShape.rotation)
+                        val shapeIdx = shapeRotationIndex(ctx.currentShape.shape, ctx.currentShape.rotation)
                         val cellsOffsets = shapes[shapeIdx]
                         val kicks = checkOverTheEdge(newCoords, cellsOffsets)
 
-                        currentShape.coords = newCoords + kicks
-                        currentShape.checkOverlap(cells)
-                        currentShape.beginMovementAnimation(ctx.elapsedTime)
+                        ctx.currentShape.coords = newCoords + kicks
+                        ctx.currentShape.checkOverlap(ctx.cells)
+                        ctx.currentShape.beginMovementAnimation(ctx.elapsedTime)
                     }
                 }
 
-                currentShape.updateMovementAnimation(ctx.elapsedTime)
-                currentShape.updateRotationAnimation(ctx.elapsedTime)
+                ctx.currentShape.updateMovementAnimation(ctx.elapsedTime)
+                ctx.currentShape.updateRotationAnimation(ctx.elapsedTime)
             }
 
             GameState.AnimatingCurrentShape -> {
-                currentShape.updateMovementAnimation(ctx.elapsedTime)
+                ctx.currentShape.updateMovementAnimation(ctx.elapsedTime)
 
-                if (!currentShape.movementAnimation.animating) {
-                    placeShapeAndBeginExplosion()
-                    state = GameState.Placing
+                if (!ctx.currentShape.movementAnimation.animating) {
+                    placeShapeAndBeginExplosion(ctx)
+                    ctx.state = GameState.Placing
                 }
             }
 
             GameState.AnimatingCellsExplosion -> {
-                explosionAnim.darken.update(ctx.elapsedTime)
-
                 var allDone = true
 
-                for (cellIdx in cells.indices) {
-                    val cell = cells[cellIdx]
+                for (cellIdx in ctx.cells.indices) {
+                    val cell = ctx.cells[cellIdx]
 
                     if (cell.explosionAnimating) {
                         val done = cell.updateExplosion(ctx.elapsedTime)
@@ -744,8 +831,12 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                     }
                 }
 
+                if (ctx.screenShake.animating) {
+                    ctx.screenShake.update()
+                }
+
                 if (allDone) {
-                    state = GameState.Placing
+                    ctx.state = GameState.Placing
                 }
             }
         }
@@ -773,6 +864,12 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
     }
 
     fun render(canvas: Canvas) {
+        if (ctx.screenShake.animating) {
+            canvas.save()
+            val (offsetx, offsety) = ctx.screenShake.offset
+            canvas.translate(offsetx, offsety)
+        }
+
         // playground
         paint.reset()
         paint.color = GCOLOR_BLACK
@@ -782,45 +879,47 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
             paint.reset()
             val scratchCoords = Coords(0, 0)
             for (idx in 0..<CELLS_COUNT * CELLS_COUNT) {
-                if (!cells[idx].filled) {
+                val cell = ctx.cells[idx]
+
+                if (!cell.filled) {
                     continue
                 }
-                if (cells[idx].chargeClrAnim.animating) {
+                if (cell.particlesAnimating) {
                     continue
                 }
 
                 scratchCoords.col = idx % CELLS_COUNT
                 scratchCoords.row = idx / CELLS_COUNT
 
-                paint.color = cells[idx].color
+                paint.color = cell.color
                 renderCell(canvas, scratchCoords)
             }
         }
 
-        when (state) {
+        when (ctx.state) {
             GameState.Countdown -> {
                 countdownText.render(canvas)
             }
 
             GameState.Placing, GameState.AnimatingCurrentShape -> {
-                assert(currentShape.shape < shapes.size)
+                assert(ctx.currentShape.shape < shapes.size)
 
                 // current shape
-                if (currentShape.shape != -1) {
+                if (ctx.currentShape.shape != -1) {
                     paint.reset()
 
-                    if (currentShape.rotationAnimation.animating) {
+                    if (ctx.currentShape.rotationAnimation.animating) {
                         // render rotation
-                        val pivot = coordsToPos(currentShape.movementAnimation.current + Vec2(2f, 2f))
+                        val pivot = coordsToPos(ctx.currentShape.movementAnimation.current + Vec2(2f, 2f))
                         canvas.save()
-                        canvas.rotate(currentShape.rotationAnimation.current, pivot.x, pivot.y)
+                        canvas.rotate(ctx.currentShape.rotationAnimation.current, pivot.x, pivot.y)
 
-                        val shapeIdx = shapeRotationIndex(currentShape.shape, 0)
+                        val shapeIdx = shapeRotationIndex(ctx.currentShape.shape, 0)
 
                         for (cellOffset in shapes[shapeIdx]) {
-                            val cellCoords = cellOffset.toVec2() + currentShape.movementAnimation.current
-                            paint.color = currentShape.color
-                            if (currentShape.overlapping) {
+                            val cellCoords = cellOffset.toVec2() + ctx.currentShape.movementAnimation.current
+                            paint.color = ctx.currentShape.color
+                            if (ctx.currentShape.overlapping) {
                                 paint.color = GCOLOR_OVERLAPPING
                             }
                             renderCell(canvas, cellCoords)
@@ -828,11 +927,11 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
 
                         canvas.restore()
                     } else {
-                        val shapeIdx = shapeRotationIndex(currentShape.shape, currentShape.rotation)
+                        val shapeIdx = shapeRotationIndex(ctx.currentShape.shape, ctx.currentShape.rotation)
                         for (cellOffset in shapes[shapeIdx]) {
-                            val cellCoords = cellOffset.toVec2() + currentShape.movementAnimation.current
-                            paint.color = currentShape.color
-                            if (currentShape.overlapping) {
+                            val cellCoords = cellOffset.toVec2() + ctx.currentShape.movementAnimation.current
+                            paint.color = ctx.currentShape.color
+                            if (ctx.currentShape.overlapping) {
                                 paint.color = GCOLOR_OVERLAPPING
                             }
                             renderCell(canvas, cellCoords)
@@ -842,18 +941,14 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
             }
 
             GameState.AnimatingCellsExplosion -> {
-                // explosion
-                paint.reset()
-                paint.color = Color.rgb(0, 0, 0)
-                paint.alpha = explosionAnim.darken.current
-                canvas.drawRoundRect(ctx.pgRect.rectf, dp(RADIUS), dp(RADIUS), paint)
-
                 // exploding cells
                 paint.reset()
+                paint.color = Color.WHITE
+
                 val scratchCoords = Coords(0, 0)
                 for (idx in 0..<CELLS_COUNT * CELLS_COUNT) {
-                    val cell = cells[idx]
-                    if (cell.chargeClrAnim.animating) {
+                    val cell = ctx.cells[idx]
+                    if (cell.chargeAlphaAnim.animating) {
                         scratchCoords.col = idx % CELLS_COUNT
                         scratchCoords.row = idx / CELLS_COUNT
 
@@ -862,11 +957,11 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                         cellCenter += ctx.cellSize / 2
 
                         // scaled
-                        val scaledCellSize = ctx.cellSize * cell.chargeSizeAnim.current
+                        val scaledCellSize = ctx.cellSize * cell.currentScale()
                         val cellx = cellCenter.x - scaledCellSize / 2
                         val celly = cellCenter.y - scaledCellSize / 2
 
-                        paint.color = cell.chargeClrAnim.current
+                        paint.alpha = cell.chargeAlphaAnim.current
                         val p = ctx.cellPadding
                         val r = dp(RADIUS) - p
                         canvas.drawRoundRect(
@@ -883,13 +978,17 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
                         for (particle in cell.particles) {
                             if (!particle.dead()) {
                                 val (cx, cy) = particle.currentPosition
-                                // println("particle: $cx, $cy")
-                                canvas.drawRect(cx, cy, cx + dp(1f), cy + dp(1f), paint)
+                                paint.alpha = particle.alpha
+                                canvas.drawRect(cx, cy, cx + dp(3f), cy + dp(3f), paint)
                             }
                         }
                     }
                 }
             }
+        }
+
+        if (ctx.screenShake.animating) {
+            canvas.restore()
         }
     }
 
@@ -904,7 +1003,7 @@ class GameView(context: Context, val onScoreChange: (Int) -> Unit) : View(contex
         lastFrameTime = currentTime
         ctx.elapsedTime += ctx.dt
 
-        update(ctx.dt)
+        update()
         render(canvas)
 
         postInvalidateOnAnimation()

@@ -95,3 +95,8 @@ fun logd(message: String) {
         Log.d("ShapesGame", message)
     }
 }
+
+fun defer(block: () -> Unit, deferred: () -> Unit) {
+    block()
+    deferred()
+}

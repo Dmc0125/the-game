@@ -8,14 +8,16 @@
 - Scoring animation (show +x when on each cell, fly towards score, animate score)
 - Announcer
   - for multi fills
-- explosion animation
+- [x] explosion animation
   - start from the last placed cell
   - particles
-  - explosion wave
+  - explosion wave ??
+  - screen shake
 - place time ?
 - better debug experience
   - debug menu - toggle on each screen
   - allow to modify values like animations duration, ...
+- Place animation (pulse)
 
 ### Next steps
 
@@ -27,3 +29,7 @@
   - change the shape of fill condition
   - gravity for cell color for some amount of time
   - make some cells undeleteable for some time
+
+- Improve explosion animation
+  - rigt now it slowly chrages up and then explodes into particles
+  - instead, quickly build up, explode and then slowly dissappear
