@@ -48,6 +48,16 @@ interface Renderer {
 
     fun measureText(text: String, textSize: Float, fontWeight: FontWeight, font: String): Float
     fun drawText(text: String, x: Float, y: Float, color: Int, textSize: Float, fontWeight: FontWeight, font: String)
+    fun strokeText(
+        text: String,
+        x: Float,
+        y: Float,
+        strokeWidth: Float,
+        color: Int,
+        textSize: Float,
+        fontWeight: FontWeight,
+        font: String
+    )
 
     object Default : Renderer {
         override fun save() = Unit
@@ -72,5 +82,16 @@ interface Renderer {
             font: String,
         ) =
             Unit
+
+        override fun strokeText(
+            text: String,
+            x: Float,
+            y: Float,
+            strokeWidth: Float,
+            color: Int,
+            textSize: Float,
+            fontWeight: FontWeight,
+            font: String
+        ) = Unit
     }
 }

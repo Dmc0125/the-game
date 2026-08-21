@@ -6,8 +6,10 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
+import android.util.Log
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.text.font.FontFamily
+import jdk.internal.icu.util.CodePointTrie
 import shapes.game.*
 
 object AppFont {
@@ -116,7 +118,62 @@ class CanvasRenderer : Renderer {
         paint.typeface = AppFont.typeface(font, fontWeight)
         canvas?.drawText(text, x, y, paint)
     }
+
+    override fun strokeText(
+        text: String,
+        x: Float,
+        y: Float,
+        strokeWidth: Float,
+        color: Int,
+        textSize: Float,
+        fontWeight: FontWeight,
+        font: String
+    ) {
+        paint.reset()
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = strokeWidth
+        paint.textSize = textSize
+        paint.color = color
+        paint.typeface = AppFont.typeface(font, fontWeight)
+        canvas?.drawText(text, x, y, paint)
+    }
 }
+
+class Metrics(val logIntervalSeconds: Float) {
+    var measuredFrames = 0
+    var startTimeNanos = 0L
+    var totalDtNanos = 0L
+    var totalUpdateNanos = 0L
+    var totalRenderNanos = 0L
+}
+
+fun Metrics.begin() {
+    startTimeNanos = System.nanoTime()
+    measuredFrames = 0
+    totalDtNanos = 0L
+    totalUpdateNanos = 0L
+    totalRenderNanos = 0L
+}
+
+fun Metrics.log() {
+    val now = System.nanoTime()
+    val elapsed = (now - startTimeNanos) / 1e9f
+
+    if (elapsed > logIntervalSeconds) {
+        val fps = measuredFrames / elapsed
+        val avgDtS = totalDtNanos / 1e9f / measuredFrames
+        val avgUpdateS = totalUpdateNanos / 1e6f / measuredFrames
+        val avgRenderS = totalRenderNanos / 1e6f / measuredFrames
+
+        Log.i(
+            "Metrics",
+            "fps=$fps, dt=${avgDtS}s, update=${avgUpdateS}ms, render=${avgRenderS}ms",
+        )
+
+        begin()
+    }
+}
+
 
 class GameView(
     context: Context,
@@ -133,6 +190,7 @@ class GameView(
     )
     val touch = Touch()
     var renderer = CanvasRenderer()
+    val metrics = Metrics(10f)
 
     init {
         game.renderer = renderer
@@ -156,7 +214,9 @@ class GameView(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        game.onSizeChanged(w.toFloat(), h.toFloat())
+
+        game.changedWidth = w.toFloat()
+        game.changedHeight = h.toFloat()
     }
 
     fun resume() {
@@ -207,14 +267,26 @@ class GameView(
         renderer.canvas = canvas
 
         val currentTime = System.nanoTime()
-        val deltaTime = (currentTime - lastFrameTime) / 1e9f
+        val delaTimeNanos = (currentTime - lastFrameTime)
+        val deltaTime = delaTimeNanos / 1e9f
         lastFrameTime = currentTime
 
         game.dt = deltaTime
         game.elapsedTime += deltaTime
 
+        val updateStartNs = System.nanoTime()
         game.update(touch)
+        val updateElapsedSeconds = System.nanoTime() - updateStartNs
+
+        val renderStartNs = System.nanoTime()
         game.render()
+        val renderElapsedSeconds = System.nanoTime() - renderStartNs
+
+        metrics.measuredFrames += 1
+        metrics.totalDtNanos += delaTimeNanos
+        metrics.totalUpdateNanos += updateElapsedSeconds
+        metrics.totalRenderNanos += renderElapsedSeconds
+        metrics.log()
 
         postInvalidateOnAnimation()
     }

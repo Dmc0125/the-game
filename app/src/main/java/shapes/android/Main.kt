@@ -69,7 +69,7 @@ enum class Screen {
 fun App() {
     val screen = remember {
         mutableStateOf(
-            if (shapes.BuildConfig.DEBUG) Screen.Start else Screen.Start
+            if (shapes.BuildConfig.DEBUG) Screen.Game else Screen.Start
         )
     }
 

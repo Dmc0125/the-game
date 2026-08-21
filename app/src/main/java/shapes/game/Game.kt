@@ -135,58 +135,6 @@ fun shapeRotationIndex(shapeIdx: Int, rotation: Int): Int {
     return (shapeIdx * 4) + (rotation % 4)
 }
 
-enum class GameState {
-    Countdown,
-    Placing,
-    AnimatingCurrentShape,
-    AnimatingCellsExplosion,
-}
-
-class CountdownText(val ctx: GameContext) {
-    val textSizeStart = 30f * ctx.scaledDensity
-    val textSizeEnd = 60f * ctx.scaledDensity
-    val textSizeDiff = textSizeEnd - textSizeStart
-
-    var text: String = ""
-    var textSize: Float = 0f
-    var start = 0f
-    var textX: Float = 0f
-    var textY: Float = 0f
-    var opacity: Float = 1f
-
-    fun update(elapsedTime: Float, pgRect: Rect): Boolean {
-        var currentText = when {
-            elapsedTime < 1f -> "3"
-            elapsedTime < 2f -> "2"
-            elapsedTime < 3f -> "1"
-            elapsedTime < 4f -> "Go"
-            else -> return true
-        }
-
-        if (currentText != text) {
-            text = currentText
-            textSize = textSizeStart
-            start = elapsedTime
-            opacity = 1f
-        } else {
-            val dt = elapsedTime - start
-            textSize = textSizeStart + textSizeDiff * dt
-            opacity = 1f - 1f * dt
-        }
-
-        val textWidth = ctx.renderer.measureText(text, textSize, FontWeight.Medium, FONT_DMMONO)
-        textX = pgRect.x + (pgRect.width - textWidth) / 2
-        textY = pgRect.y + textSize + (pgRect.height - textSize) / 2
-
-        return false
-    }
-
-    fun render() {
-        val color = Color.argb((opacity * 255).toInt(), 255, 255, 255)
-        ctx.renderer.drawText(text, textX, textY, color, textSize, FontWeight.Medium, FONT_DMMONO)
-    }
-}
-
 fun lerp(start: Float, end: Float, progress: Float): Float = start + (end - start) * progress
 fun lerp(start: Vec2, end: Vec2, progress: Float): Vec2 = start + (end - start) * progress
 fun lerp(start: Int, end: Int, progress: Float): Int = (start + (end - start) * progress).toInt()
@@ -231,6 +179,51 @@ data class Animation<T>(
         }
 
         current = lerp(animationStartValue, animationEndValue, progress)
+    }
+}
+
+class CountdownText(val ctx: GameContext) {
+    val textSizeStart = 30f * ctx.scaledDensity
+    val textSizeEnd = 60f * ctx.scaledDensity
+    val textSizeDiff = textSizeEnd - textSizeStart
+
+    var text: String = ""
+    var textSize: Float = 0f
+    var start = 0f
+    var textX: Float = 0f
+    var textY: Float = 0f
+    var opacity: Float = 1f
+
+    fun update(elapsedTime: Float, pgRect: Rect): Boolean {
+        var currentText = when {
+            elapsedTime < 1f -> "3"
+            elapsedTime < 2f -> "2"
+            elapsedTime < 3f -> "1"
+            elapsedTime < 4f -> "Go"
+            else -> return true
+        }
+
+        if (currentText != text) {
+            text = currentText
+            textSize = textSizeStart
+            start = elapsedTime
+            opacity = 1f
+        } else {
+            val dt = elapsedTime - start
+            textSize = textSizeStart + textSizeDiff * dt
+            opacity = 1f - 1f * dt
+        }
+
+        val textWidth = ctx.renderer.measureText(text, textSize, FontWeight.Medium, FONT_DMMONO)
+        textX = pgRect.x + (pgRect.width - textWidth) / 2
+        textY = pgRect.y + textSize + (pgRect.height - textSize) / 2
+
+        return false
+    }
+
+    fun render() {
+        val color = Color.argb((opacity * 255).toInt(), 255, 255, 255)
+        ctx.renderer.drawText(text, textX, textY, color, textSize, FontWeight.Medium, FONT_DMMONO)
     }
 }
 
@@ -356,10 +349,72 @@ fun ShapesBag.next(): Int {
     return c
 }
 
+class ScoreAnnouncer(val ctx: GameContext) {
+    var startPos = Vec2.DEFAULT
+    var endOffset = 0f
+    val duration = 0.5f
 
-data class Particle(
-    val ctx: GameContext,
-) {
+    var animating = false
+    var text = ""
+    var currentPos = Vec2.DEFAULT
+    var startTime = 0f
+    var alpha = 0
+}
+
+fun ScoreAnnouncer.init(coords: Coords) {
+    val padding = ctx.cellSize * 0.3f
+
+    startPos = coordsToPos(ctx, coords) // cell top left
+    startPos.x += ctx.cellSize // cell top right
+    startPos.x += padding
+
+    endOffset = ctx.cellSize / 2
+
+    alpha = 255
+}
+
+fun ScoreAnnouncer.begin(amount: Int) {
+    text = "+$amount"
+    currentPos = startPos.copy()
+    startTime = ctx.elapsedTime
+    animating = true
+}
+
+fun ScoreAnnouncer.update() {
+    val age = ctx.elapsedTime - startTime
+    if (age > duration) {
+        animating = false
+        return
+    }
+
+    val fraction = age / duration
+    currentPos.y = startPos.y - lerp(0f, endOffset, fraction)
+    alpha = lerp(255, 0, fraction)
+}
+
+fun ScoreAnnouncer.render() {
+    ctx.renderer.drawText(
+        text,
+        currentPos.x,
+        currentPos.y,
+        Color.addAlpha(alpha, Color.WHITE),
+        16f * ctx.scaledDensity,
+        FontWeight.Medium,
+        FONT_DMMONO
+    )
+    ctx.renderer.strokeText(
+        text,
+        currentPos.x,
+        currentPos.y,
+        0.75f * ctx.scaledDensity,
+        Color.addAlpha(alpha, Color.BLACK),
+        16f * ctx.scaledDensity,
+        FontWeight.Medium,
+        FONT_DMMONO
+    )
+}
+
+data class Particle(val ctx: GameContext) {
     // config
     val startPosition = Vec2(0f, 0f)
     var distance = 0f
@@ -371,13 +426,10 @@ data class Particle(
     var spawnTime = 0f
 }
 
-fun Particle.init(cellIdx: Int) {
+fun Particle.init(coords: Coords) {
     // center of the cell
-    val col = cellIdx % CELLS_COUNT
-    val row = cellIdx / CELLS_COUNT
 
-    val x = ctx.pgPadding + col * ctx.cellSize
-    val y = ctx.pgPadding + row * ctx.cellSize
+    val (x, y) = coordsToPos(ctx, coords)
 
     startPosition.x = x + ctx.cellSize / 2f
     startPosition.y = y + ctx.cellSize / 2f
@@ -445,6 +497,8 @@ data class Cell(
 
     var particlesAnimating = false
     val particles = Array(PARTICLE_COUNT_PER_CELL) { Particle(ctx) }
+
+    val scoreAnnouncer = ScoreAnnouncer(ctx)
 }
 
 fun Cell.beginExplosion(elapsedTime: Float, delay: Float) {
@@ -490,6 +544,7 @@ fun Cell.updateExplosion(elapsedTime: Float) {
                 }
             } else {
                 animationState = CellAnimationState.Exploding
+                scoreAnnouncer.begin(10)
             }
         }
 
@@ -553,6 +608,13 @@ class ScreenShake(val ctx: GameContext) {
     }
 }
 
+enum class GameState {
+    Countdown,
+    Placing,
+    AnimatingCurrentShape,
+    AnimatingCellsExplosion,
+}
+
 class GameContext(
     val pixelDensity: Float,
     val scaledDensity: Float,
@@ -563,13 +625,21 @@ class GameContext(
     var elapsedTime = 0f
     var renderer: Renderer = Renderer.Default
 
+    // outside effects
+
     var pendingRotation = false
     var pendingPlacement = false
+    var changedWidth = -1f
+    var changedHeight = -1f
+
+    // layout
 
     var pgRect = Rect()
     var pgPadding = 0f
     var cellSize = 0f
     var cellPadding = 0f
+
+    // state
 
     val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell(this, it) }
     var state: GameState = GameState.Countdown
@@ -577,7 +647,6 @@ class GameContext(
     var currentShape = CurrentShape()
     val countdownText = CountdownText(this)
     val screenShake = ScreenShake(this)
-
     var score = 0
 }
 
@@ -586,18 +655,20 @@ fun GameContext.addScore(amount: Int) {
     onScoreChange?.invoke(score)
 }
 
-fun GameContext.onSizeChanged(wf: Float, hf: Float) {
-    pgPadding = wf * PLAYGROUND_PADDING_FRACTION
-    pgRect = Rect(0f, 0f, wf, hf)
+fun cellIdxToCoords(idx: Int): Coords {
+    val col = idx % CELLS_COUNT
+    val row = idx / CELLS_COUNT
+    return Coords(col, row)
+}
 
-    cellSize = (wf - pgPadding * 2) / CELLS_COUNT
-    cellPadding = cellSize * CELL_PADDING_FRACTION
+fun coordsToPos(ctx: GameContext, coords: Coords): Vec2 {
+    return coordsToPos(ctx, coords.toVec2())
+}
 
-    for (cell in cells) {
-        for (particle in cell.particles) {
-            particle.init(cell.idx)
-        }
-    }
+fun coordsToPos(ctx: GameContext, coords: Vec2): Vec2 {
+    val x = coords.x * ctx.cellSize + ctx.pgPadding
+    val y = coords.y * ctx.cellSize + ctx.pgPadding
+    return Vec2(x, y)
 }
 
 fun coordsToIdx(col: Int, row: Int): Int {
@@ -613,6 +684,7 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
         cell.filled = true
         cell.filledAt = ctx.elapsedTime
         cell.color = ctx.currentShape.color
+        cell.scoreAnnouncer.begin(1)
 
         ctx.addScore(1)
     }
@@ -750,19 +822,57 @@ fun checkOverTheEdge(newCoords: Coords, cellsOffsets: Array<Coords>): Coords {
 }
 
 fun GameContext.update(touch: Touch) {
+    // size change
+
+    if (changedWidth > -1f || changedHeight > -1) {
+        val wf = changedWidth
+        val hf = changedHeight
+
+        pgPadding = wf * PLAYGROUND_PADDING_FRACTION
+        pgRect = Rect(0f, 0f, wf, hf)
+
+        cellSize = (wf - pgPadding * 2) / CELLS_COUNT
+        cellPadding = cellSize * CELL_PADDING_FRACTION
+
+        for (cell in cells) {
+            val col = cell.idx % CELLS_COUNT
+            val row = cell.idx / CELLS_COUNT
+            val coords = Coords(col, row)
+
+            for (particle in cell.particles) {
+                particle.init(coords)
+            }
+
+            cell.scoreAnnouncer.init(coords)
+        }
+
+        changedWidth = -1f
+        changedHeight = -1f
+    }
+
+    // score announcer
+    for (cell in cells) {
+        if (cell.scoreAnnouncer.animating) {
+            cell.scoreAnnouncer.update()
+        }
+    }
+
+
     when (state) {
         GameState.Countdown -> {
-            // if (shapes.BuildConfig.DEBUG) {
-            //     state = GameState.Placing
-            // } else {
-            if (countdownText.update(elapsedTime, pgRect)) {
+            if (shapes.BuildConfig.DEBUG) {
                 state = GameState.Placing
+            } else {
+                if (countdownText.update(elapsedTime, pgRect)) {
+                    state = GameState.Placing
+                }
             }
-            // }
         }
 
         GameState.Placing -> {
-            if (currentShape.shape == -1) { // spawn
+            // spawn
+
+            if (currentShape.shape == -1) {
                 val shapeIdx = shapesBag.next()
                 val nextShapeIdx = shapesBag.peek()
 
@@ -774,6 +884,8 @@ fun GameContext.update(touch: Touch) {
                 pendingRotation = false
                 pendingPlacement = false
             }
+
+            // rotation
 
             if (pendingRotation) {
                 val newRotation = currentShape.rotation + 1
@@ -794,6 +906,8 @@ fun GameContext.update(touch: Touch) {
                 pendingRotation = false
             }
 
+            // placement
+
             if (pendingPlacement) {
                 if (!currentShape.overlapping) {
                     if (!currentShape.movementAnimation.animating) {
@@ -805,32 +919,38 @@ fun GameContext.update(touch: Touch) {
                 pendingPlacement = false
             }
 
-            if (!currentShape.dragging && touch.isDown) {
-                currentShape.dragging = true
-            } else if (currentShape.dragging) {
-                if (!touch.isDown) {
-                    currentShape.dragging = false
-                    currentShape.coordsPrev = currentShape.coords.copy()
-                } else {
-                    val diff = touch.position - touch.startPosition
-                    val colsDiff = (diff / cellSize) * DRAG_SENSITIVITY
-                    var newCoords = currentShape.coordsPrev + colsDiff.toCoords()
+            // shape movement
 
-                    val shapeIdx = shapeRotationIndex(currentShape.shape, currentShape.rotation)
-                    val cellsOffsets = shapesMap[shapeIdx]
-                    val kicks = checkOverTheEdge(newCoords, cellsOffsets)
+            if (currentShape.shape > -1) {
+                if (!currentShape.dragging && touch.isDown) {
+                    currentShape.dragging = true
+                } else if (currentShape.dragging) {
+                    if (!touch.isDown) {
+                        currentShape.dragging = false
+                        currentShape.coordsPrev = currentShape.coords.copy()
+                    } else {
+                        val diff = touch.position - touch.startPosition
+                        val colsDiff = (diff / cellSize) * DRAG_SENSITIVITY
+                        var newCoords = currentShape.coordsPrev + colsDiff.toCoords()
 
-                    currentShape.coords = newCoords + kicks
-                    currentShape.checkOverlap(cells)
-                    currentShape.beginMovementAnimation(elapsedTime)
+                        val shapeIdx = shapeRotationIndex(currentShape.shape, currentShape.rotation)
+                        val cellsOffsets = shapesMap[shapeIdx]
+                        val kicks = checkOverTheEdge(newCoords, cellsOffsets)
+
+                        currentShape.coords = newCoords + kicks
+                        currentShape.checkOverlap(cells)
+                        currentShape.beginMovementAnimation(elapsedTime)
+                    }
                 }
-            }
 
-            currentShape.updateMovementAnimation(elapsedTime)
-            currentShape.updateRotationAnimation(elapsedTime)
+                currentShape.updateMovementAnimation(elapsedTime)
+                currentShape.updateRotationAnimation(elapsedTime)
+            }
         }
 
         GameState.AnimatingCurrentShape -> {
+            // shape dragging
+
             currentShape.updateMovementAnimation(elapsedTime)
 
             if (!currentShape.movementAnimation.animating) {
@@ -884,12 +1004,6 @@ fun GameContext.update(touch: Touch) {
     }
 }
 
-fun coordsToPos(ctx: GameContext, coords: Vec2): Vec2 {
-    val x = coords.x * ctx.cellSize + ctx.pgPadding
-    val y = coords.y * ctx.cellSize + ctx.pgPadding
-    return Vec2(x, y)
-}
-
 fun renderCell(ctx: GameContext, renderer: Renderer, coords: Coords, color: Int) {
     renderCell(ctx, renderer, coords.toVec2(), color)
 }
@@ -916,21 +1030,17 @@ fun GameContext.render() {
     renderer.drawRoundRect(pgRect, RADIUS * pixelDensity, Color.BLACK)
 
     run { // draw placed cells
-        val scratchCoords = Coords(0, 0)
         for (idx in 0..<CELLS_COUNT * CELLS_COUNT) {
             val cell = cells[idx]
 
-            if (!cell.filled) {
-                continue
-            }
-            if (cell.particlesAnimating) {
-                continue
+            if (cell.filled && !cell.particlesAnimating) {
+                val coords = cellIdxToCoords(idx)
+                renderCell(this, renderer, coords, cell.color)
             }
 
-            scratchCoords.col = idx % CELLS_COUNT
-            scratchCoords.row = idx / CELLS_COUNT
-
-            renderCell(this, renderer, scratchCoords, cell.color)
+            if (cell.scoreAnnouncer.animating) {
+                cell.scoreAnnouncer.render()
+            }
         }
     }
 

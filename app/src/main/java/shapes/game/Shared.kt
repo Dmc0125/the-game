@@ -5,6 +5,10 @@ import android.util.Log
 // TODO: maybe rewrite these into value class so they do not allocate
 
 data class Vec2(var x: Float, var y: Float) {
+    companion object {
+        val DEFAULT = Vec2(0f, 0f)
+    }
+
     operator fun plus(other: Vec2): Vec2 {
         return Vec2(x + other.x, y + other.y)
     }
