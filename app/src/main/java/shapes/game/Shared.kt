@@ -80,23 +80,8 @@ data class Coords(var col: Int, var row: Int) {
     }
 }
 
-data class Touch(
-    var isDown: Boolean = false,
-    var position: Vec2 = Vec2(0f, 0f),
-    var startPosition: Vec2 = Vec2(0f, 0f),
-)
-
-fun colorAddAlpha(color: Int, alpha: Int): Int {
-    return alpha or (color and (0xff shl 16)) or (color and (0xff shl 8)) or (color and 0xff)
-}
-
 fun logd(message: String) {
-    if (BuildConfig.LOG_DEBUG) {
+    if (shapes.BuildConfig.LOG_DEBUG) {
         Log.d("ShapesGame", message)
     }
-}
-
-fun defer(block: () -> Unit, deferred: () -> Unit) {
-    block()
-    deferred()
 }

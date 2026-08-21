@@ -1,0 +1,316 @@
+package shapes.android
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.view.MotionEvent
+import android.view.View
+import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.text.font.FontFamily
+import shapes.game.*
+
+object AppFont {
+    data class FontKey(val name: String, val weight: FontWeight)
+    data class Font(val typeface: Typeface, val family: FontFamily)
+
+    val fonts: MutableMap<FontKey, Font> = mutableMapOf()
+
+    fun initFont(context: Context, name: String) {
+        val assets = context.assets
+
+        fun loadFontWeight(name: String, weight: FontWeight) {
+            try {
+                val typeface = Typeface.createFromAsset(
+                    assets,
+                    "font/${name}_${weight.string().lowercase()}.ttf",
+                )
+                if (typeface != null) {
+                    fonts[FontKey(name, weight)] = Font(typeface, FontFamily(typeface))
+                }
+            } catch (e: Exception) {
+            }
+        }
+
+        loadFontWeight(name, FontWeight.ExtraLight)
+        loadFontWeight(name, FontWeight.Light)
+        loadFontWeight(name, FontWeight.Regular)
+        loadFontWeight(name, FontWeight.Medium)
+        loadFontWeight(name, FontWeight.SemiBold)
+        loadFontWeight(name, FontWeight.Bold)
+        loadFontWeight(name, FontWeight.ExtraBold)
+    }
+}
+
+fun AppFont.typeface(name: String, weight: FontWeight): Typeface {
+    val face = fonts[AppFont.FontKey(name, weight)]?.typeface
+    require(face != null) { "Font not found: $name $weight" }
+    return face
+}
+
+fun AppFont.family(name: String, weight: FontWeight): FontFamily {
+    val family = fonts[AppFont.FontKey(name, weight)]?.family
+    require(family != null) { "Font not found: $name $weight" }
+    return family
+}
+
+class CanvasRenderer : Renderer {
+    val paint = Paint()
+    var canvas: Canvas? = null
+
+    override fun save() {
+        canvas?.save()
+    }
+
+    override fun restore() {
+        canvas?.restore()
+    }
+
+    override fun translate(x: Float, y: Float) {
+        canvas?.translate(x, y)
+    }
+
+    override fun rotate(angle: Float, x: Float, y: Float) {
+        canvas?.rotate(angle, x, y)
+    }
+
+    override fun drawRoundRect(x: Float, y: Float, width: Float, height: Float, radius: Float, color: Int) {
+        paint.reset()
+        paint.color = color
+        canvas?.drawRoundRect(x, y, x + width, y + height, radius, radius, paint)
+    }
+
+    override fun drawRoundRect(rect: Rect, radius: Float, color: Int) {
+        drawRoundRect(rect.x, rect.y, rect.width, rect.height, radius, color)
+    }
+
+    override fun drawRect(x: Float, y: Float, width: Float, height: Float, color: Int) {
+        paint.reset()
+        paint.color = color
+        canvas?.drawRect(x, y, x + width, y + height, paint)
+    }
+
+    override fun drawRect(rect: Rect, color: Int) {
+        drawRect(rect.x, rect.y, rect.width, rect.height, color)
+    }
+
+    override fun measureText(text: String, textSize: Float, fontWeight: FontWeight, font: String): Float {
+        paint.reset()
+        paint.textSize = textSize
+        paint.typeface = AppFont.typeface(font, fontWeight)
+        return paint.measureText(text)
+    }
+
+    override fun drawText(
+        text: String,
+        x: Float,
+        y: Float,
+        color: Int,
+        textSize: Float,
+        fontWeight: FontWeight,
+        font: String
+    ) {
+        paint.reset()
+        paint.textSize = textSize
+        paint.color = color
+        paint.typeface = AppFont.typeface(font, fontWeight)
+        canvas?.drawText(text, x, y, paint)
+    }
+}
+
+class GameView(
+    context: Context,
+    onScoreChange: (Int) -> Unit,
+    onNextShape: (Int) -> Unit,
+) : View(context) {
+    var running = false
+    var lastFrameTime: Long = 0
+    val game = GameContext(
+        context.resources.displayMetrics.density,
+        context.resources.displayMetrics.scaledDensity,
+        onScoreChange,
+        onNextShape,
+    )
+    val touch = Touch()
+    var renderer = CanvasRenderer()
+
+    init {
+        game.renderer = renderer
+    }
+
+    // debug
+
+    fun debugFillRow() {
+        for (col in 0..<CELLS_COUNT - 1) {
+            val cell = game.cells[col + CELLS_COUNT]
+            cell.filled = true
+            cell.color = colors[0]
+        }
+    }
+
+    fun debugSpawnShape() {
+        game.currentShape = CurrentShape(0)
+    }
+
+    //
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        game.onSizeChanged(w.toFloat(), h.toFloat())
+    }
+
+    fun resume() {
+        running = true
+        lastFrameTime = System.nanoTime()
+    }
+
+    fun pause() {
+        running = false
+    }
+
+    fun handleShapeRotate() {
+        game.pendingRotation = true
+    }
+
+    fun handleShapePlace() {
+        game.pendingPlacement = true
+    }
+
+    fun handleTouch(event: PointerEvent) {
+        val me = event.motionEvent ?: return
+
+        when (me.action) {
+            MotionEvent.ACTION_DOWN -> {
+                touch.isDown = true
+                touch.position.x = me.x
+                touch.position.y = me.y
+                touch.startPosition.x = me.x
+                touch.startPosition.y = me.y
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                touch.position.x = me.x
+                touch.position.y = me.y
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                touch.isDown = false
+            }
+
+            else -> return
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        if (!running) return
+
+        renderer.canvas = canvas
+
+        val currentTime = System.nanoTime()
+        val deltaTime = (currentTime - lastFrameTime) / 1e9f
+        lastFrameTime = currentTime
+
+        game.dt = deltaTime
+        game.elapsedTime += deltaTime
+
+        game.update(touch)
+        game.render()
+
+        postInvalidateOnAnimation()
+    }
+}
+
+class NextShapeView(context: Context) : View(context) {
+    val maxCellSize = 49f
+    val rectPaddingFraction = 0.1f
+
+    var rect = Rect()
+    var innerRect = Rect()
+
+    val paint = Paint()
+    var cellSize = 0f
+    var shape: Array<Coords>? = null
+
+    var minCol = Int.MAX_VALUE
+    var minRow = Int.MAX_VALUE
+    var totalWidth = 0f
+    var totalHeight = 0f
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+
+        val wf = w.toFloat()
+        val hf = h.toFloat()
+
+        rect = Rect(0f, 0f, wf, hf)
+        val padding = rect.width * rectPaddingFraction
+        innerRect = Rect(padding, padding, rect.width - padding, rect.height - padding)
+    }
+
+    fun onNextShape(shapeIdx: Int) {
+        shape = shapesMap[shapeRotationIndex(shapeIdx, 0)]
+    }
+
+    fun update() {
+        if (shape == null) return
+
+        minCol = Int.MAX_VALUE
+        var maxCol = Int.MIN_VALUE
+        minRow = Int.MAX_VALUE
+        var maxRow = Int.MIN_VALUE
+
+        for (cell in shape) {
+            minCol = kotlin.math.min(minCol, cell.col)
+            maxCol = kotlin.math.max(maxCol, cell.col)
+            minRow = kotlin.math.min(minRow, cell.row)
+            maxRow = kotlin.math.max(maxRow, cell.row)
+        }
+
+        val cols = maxCol - minCol + 1
+        val rows = maxRow - minRow + 1
+
+        cellSize = minOf(
+            innerRect.width / cols.toFloat(),
+            innerRect.height / rows.toFloat(),
+            maxCellSize,
+        )
+
+        totalWidth = cols * cellSize
+        totalHeight = rows * cellSize
+    }
+
+    fun render(canvas: Canvas) {
+        if (shape != null) {
+            paint.reset()
+            paint.color = colors[0]
+
+            val left = innerRect.x + (innerRect.width - totalWidth) / 2f
+            val top = innerRect.y + (innerRect.height - totalHeight) / 2f
+
+            for (cell in shape) {
+                val (col, row) = cell
+
+                var x = left + (col - minCol) * cellSize
+                var y = top + (row - minRow) * cellSize
+
+                val padding = cellSize * 0.05f
+                val radius = cellSize * CELL_RADIUS_FRACTION
+
+                canvas.drawRoundRect(
+                    x + padding,
+                    y + padding,
+                    x + cellSize - padding,
+                    y + cellSize - padding,
+                    radius, radius,
+                    paint,
+                )
+            }
+        }
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        update()
+        render(canvas)
+        postInvalidateOnAnimation()
+    }
+}

@@ -34,7 +34,7 @@ echo "Running assemble with: $ASSEMBLE_ARGS"
 
 adb -s "$DEVICE_SERIAL" install -r "$APK" # install on device
 adb -s "$DEVICE_SERIAL" shell am force-stop "$APP_ID" 1
-adb -s "$DEVICE_SERIAL" shell am start -n "$APP_ID/.MainActivity"
+adb -s "$DEVICE_SERIAL" shell am start -n "$APP_ID/shapes.android.MainActivity"
 
 # wait for app to start and get PID
 

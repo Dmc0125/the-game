@@ -1,134 +1,27 @@
-package shapes.game
+package shapes.android
 
-import android.content.pm.ActivityInfo
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import shapes.game.R
-
-val COLOR_BLUE = Color(112, 228, 239)
-val COLOR_YELLOW = Color(226, 239, 112)
-val COLOR_BLACK = Color(39, 43, 43)
-const val RADIUS = 8f
-
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        AppFont.init(this)
-
-        enableEdgeToEdge()
-        this.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-
-        WindowCompat.getInsetsController(window, window.decorView).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
-
-        setContent {
-            App()
-        }
-    }
-}
-
-enum class Screen {
-    Start,
-    Game,
-}
-
-@Composable
-fun App() {
-    var screen by remember { mutableStateOf(Screen.Start) }
-    if (BuildConfig.DEBUG) {
-        screen = Screen.Game
-    }
-
-    Box(modifier = Modifier.fillMaxSize().background(COLOR_YELLOW), contentAlignment = Alignment.Center) {
-        when (screen) {
-            Screen.Start -> {
-                Button(
-                    backgroundColor = COLOR_BLUE,
-                    paddingHorizontal = 32.dp,
-                    paddingVertical = 20.dp,
-                    onClick = { screen = Screen.Game },
-                ) {
-                    BasicText(
-                        text = "Start",
-                        style = TextStyle(
-                            color = Color.Black,
-                            fontSize = 24.sp,
-                            fontFamily = AppFont.famBold
-                        )
-                    )
-                }
-            }
-
-            Screen.Game -> GameScreen()
-        }
-    }
-}
-
-@Composable
-fun Modifier.neobrutalistShadow(
-    color: Color = Color.Black,
-    offsetX: Dp = 6.dp,
-    offsetY: Dp = 6.dp,
-    radius: Dp = RADIUS.dp,
-) = drawBehind {
-    drawRoundRect(
-        color = color,
-        topLeft = Offset(offsetX.toPx(), offsetY.toPx()),
-        cornerRadius = CornerRadius(radius.toPx()),
-        size = size,
-    )
-}
+import shapes.game.FONT_DMMONO
+import shapes.game.FONT_MANROPE
+import shapes.game.FontWeight
 
 @Composable
 fun GameScreen() {
@@ -190,7 +83,8 @@ fun GameScreen() {
                     text = "SCORE",
                     style = TextStyle(
                         fontSize = 16.sp,
-                        fontFamily = AppFont.famMonoMedium,
+                        // fontFamily = AppFont.famMonoMedium,
+                        fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Medium),
                         color = Color.Black,
                     ),
                 )
@@ -206,7 +100,8 @@ fun GameScreen() {
                         text = score,
                         style = TextStyle(
                             fontSize = 40.sp,
-                            fontFamily = AppFont.famMonoMedium,
+                            // fontFamily = AppFont.famMonoMedium,
+                            fontFamily = AppFont.family(FONT_DMMONO, FontWeight.Medium),
                             color = Color.Black,
                         ),
                     )
@@ -218,7 +113,7 @@ fun GameScreen() {
                     .fillMaxHeight()
                     .aspectRatio(1f)
                     .background(
-                        COLOR_BLACK, RoundedCornerShape(
+                        Color(shapes.game.Color.BLACK), RoundedCornerShape(
                             topStart = 0.dp,
                             topEnd = RADIUS.dp,
                             bottomStart = 0.dp,
@@ -240,7 +135,8 @@ fun GameScreen() {
                     text = "NEXT",
                     style = TextStyle(
                         fontSize = 16.sp,
-                        fontFamily = AppFont.famMonoMedium,
+                        // fontFamily = AppFont.famMonoMedium,
+                        fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Medium),
                         color = Color.White,
                     ),
                 )
@@ -285,13 +181,14 @@ fun GameScreen() {
             Button(
                 paddingHorizontal = 32.dp,
                 paddingVertical = 32.dp,
-                onClick = { gameView.value?.handleRotate() },
+                onClick = { gameView.value?.handleShapeRotate() },
             ) {
                 BasicText(
                     text = "R",
                     style = TextStyle(
                         fontSize = 16.sp,
-                        fontFamily = AppFont.famBold,
+                        // fontFamily = AppFont.famBold,
+                        fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Bold),
                         color = Color.Black,
                     )
                 )
@@ -301,20 +198,21 @@ fun GameScreen() {
                 modifier = Modifier.fillMaxWidth(),
                 paddingHorizontal = 32.dp,
                 paddingVertical = 32.dp,
-                onClick = { gameView.value?.handlePlace() },
+                onClick = { gameView.value?.handleShapePlace() },
             ) {
                 BasicText(
                     text = "Place",
                     style = TextStyle(
                         fontSize = 16.sp,
-                        fontFamily = AppFont.famBold,
+                        // fontFamily = AppFont.famBold,
+                        fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Bold),
                         color = Color.Black,
                     )
                 )
             }
         }
 
-        if (BuildConfig.DEBUG) {
+        if (shapes.BuildConfig.DEBUG) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -331,62 +229,5 @@ fun GameScreen() {
                 )
             }
         }
-    }
-}
-
-@Composable
-fun Button(
-    modifier: Modifier = Modifier,
-    backgroundColor: Color = Color.White,
-    paddingHorizontal: Dp = 20.dp,
-    paddingVertical: Dp = 20.dp,
-    onClick: () -> Unit,
-    text: String? = null,
-    content: (@Composable BoxScope.() -> Unit)? = null,
-) {
-    var c = content
-    if (c == null && text != null) {
-        c = {
-            BasicText(
-                text = text,
-                style = TextStyle(
-                    fontSize = 16.sp,
-                    fontFamily = AppFont.famBold,
-                    color = Color.Black,
-                )
-            )
-        }
-    }
-    check(c != null)
-
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-
-    val animTranslation by animateDpAsState(
-        targetValue = if (pressed) 6.dp else 0.dp,
-        label = "translation",
-    )
-
-    Box(
-        modifier = modifier
-            .graphicsLayer {
-                translationX = animTranslation.toPx()
-                translationY = animTranslation.toPx()
-            }
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick,
-            )
-            .neobrutalistShadow(
-                offsetX = 6.dp - animTranslation,
-                offsetY = 6.dp - animTranslation,
-            )
-            .background(backgroundColor, RoundedCornerShape(RADIUS.dp))
-            .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
-            .padding(horizontal = paddingHorizontal, vertical = paddingVertical),
-        contentAlignment = Alignment.Center,
-    ) {
-        c()
     }
 }

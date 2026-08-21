@@ -6,7 +6,7 @@ plugins {
 val logDebug = providers.gradleProperty("logDebug").map { it.toBoolean() }.orElse(false)
 
 android {
-    namespace = "shapes.game"
+    namespace = "shapes"
     compileSdk {
         version = release(37)
     }
