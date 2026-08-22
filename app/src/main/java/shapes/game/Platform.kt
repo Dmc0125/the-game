@@ -43,6 +43,8 @@ interface Renderer {
     fun drawRoundRect(x: Float, y: Float, width: Float, height: Float, radius: Float, color: Int)
     fun drawRoundRect(rect: Rect, radius: Float, color: Int)
 
+    fun strokeRoundRect(x: Float, y: Float, width: Float, height: Float, radius: Float, color: Int, strokeWidth: Float)
+
     fun drawRect(x: Float, y: Float, width: Float, height: Float, color: Int)
     fun drawRect(rect: Rect, color: Int)
 
@@ -67,6 +69,16 @@ interface Renderer {
 
         override fun drawRoundRect(x: Float, y: Float, width: Float, height: Float, radius: Float, color: Int) = Unit
         override fun drawRoundRect(rect: Rect, radius: Float, color: Int) = Unit
+
+        override fun strokeRoundRect(
+            x: Float,
+            y: Float,
+            width: Float,
+            height: Float,
+            radius: Float,
+            color: Int,
+            strokeWidth: Float
+        ) = Unit
 
         override fun drawRect(x: Float, y: Float, width: Float, height: Float, color: Int) = Unit
         override fun drawRect(rect: Rect, color: Int) = Unit

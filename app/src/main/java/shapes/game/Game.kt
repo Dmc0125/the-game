@@ -238,34 +238,24 @@ class CurrentShape(
     val ctx: GameContext,
     var shape: Int = -1,
 ) {
+    companion object {
+        val DEFAULT_COORDS = Coords(CELLS_COUNT / 2 - SHAPE_CELLS_COUNT / 2, CELLS_COUNT / 2 - SHAPE_CELLS_COUNT / 2)
+    }
+
     val createdAt: Float = ctx.elapsedTime
-    var coords: Coords = Coords(CELLS_COUNT / 2 - SHAPE_CELLS_COUNT / 2, CELLS_COUNT / 2 - SHAPE_CELLS_COUNT / 2)
     val color: Int = colors[Random.nextInt(colors.size)]
 
     var rotation: Int = 0
     var dragging: Boolean = false
 
-    var coordsPrev = coords.copy()
     var overlapping = false
 
-    val movementAnimation = Animation(coords.toVec2(), SHAPE_MOVEMENT_ANIMATION_DURATION, lerp = ::lerp)
-    val rotationAnimation = Animation(rotation * 90f, SHAPE_MOVEMENT_ANIMATION_DURATION, lerp = ::lerp)
+    var projectionCoords = DEFAULT_COORDS.copy()
+    var posCoordsPrev = DEFAULT_COORDS.toVec2()
+    var posCoords = DEFAULT_COORDS.toVec2()
 
-    fun beginMovementAnimation() {
-        movementAnimation.begin(ctx.elapsedTime, coords.toVec2())
-    }
-
-    fun updateMovementAnimation() {
-        movementAnimation.update(ctx.elapsedTime)
-    }
-
-    fun beginRotationAnimation() {
-        rotationAnimation.begin(ctx.elapsedTime, rotation * 90f)
-    }
-
-    fun updateRotationAnimation() {
-        rotationAnimation.update(ctx.elapsedTime)
-    }
+    val projectionAnim = Animation(DEFAULT_COORDS.toVec2(), SHAPE_MOVEMENT_ANIMATION_DURATION, lerp = ::lerp)
+    val rotationAnim = Animation(0f, SHAPE_MOVEMENT_ANIMATION_DURATION, lerp = ::lerp)
 
     fun cells(): Iterable<Coords> {
         return Iterable {
@@ -282,21 +272,28 @@ class CurrentShape(
                     if (!hasNext()) throw NoSuchElementException()
                     val offset = cells[idx]
                     idx += 1
-                    return coords + offset
+                    return projectionCoords + offset
                 }
             }
         }
     }
+}
 
-    fun checkOverlap(cells: Array<Cell>) {
-        overlapping = false
-        for (cellCoords in cells()) {
-            val idx = cellCoords.col + cellCoords.row * CELLS_COUNT
-            assert(idx in cells.indices) { "idx=$idx, cells.size=${cells.size}" }
-            if (cells[idx].filled) {
-                overlapping = true
-                break
-            }
+fun CurrentShape.move(newPos: Vec2) {
+    posCoords = newPos
+    projectionCoords.col = kotlin.math.round(newPos.x).toInt()
+    projectionCoords.row = kotlin.math.round(newPos.y).toInt()
+    projectionAnim.begin(ctx.elapsedTime, projectionCoords.toVec2())
+}
+
+fun CurrentShape.checkOverlap() {
+    overlapping = false
+    for (cellCoords in cells()) {
+        val idx = coordsToIdx(cellCoords.col, cellCoords.row)
+        assert(idx in ctx.cells.indices) { "idx=$idx, cells.size=${ctx.cells.size}" }
+        if (ctx.cells[idx].filled) {
+            overlapping = true
+            break
         }
     }
 }
@@ -313,7 +310,7 @@ fun CurrentShape.availablePlacementCoords(rot: Int = -1): Coords? {
         Coords(-1, -1), // up left
     )
 
-    val queue = ArrayDeque(listOf(coords))
+    val queue = ArrayDeque(listOf(projectionCoords))
     val visited = mutableSetOf<Coords>()
     val shapeIdx = shapeRotationIndex(shape, if (rot == -1) this.rotation else rot)
 
@@ -377,28 +374,34 @@ fun CurrentShape.render() {
     fun renderShape(rot: Int = 0) {
         val shapeIdx = shapeRotationIndex(shape, rot)
         for (cellOffset in shapesMap[shapeIdx]) {
-            val cellCoords = cellOffset.toVec2() + movementAnimation.current
-            val color = if (overlapping) {
+            val clr = if (overlapping) {
                 Color.OVERLAPPING
             } else {
                 color
             }
-            renderCell(ctx, cellCoords, color)
+
+            val projectionCellCoords = cellOffset.toVec2() + projectionAnim.current
+            renderCell(ctx, projectionCellCoords, Color.addAlpha(150, clr), true)
+
+            val cellPosCoords = cellOffset.toVec2() + posCoords
+            renderCell(ctx, cellPosCoords, clr)
         }
     }
 
     // rotating
-    if (rotationAnimation.animating) {
+    if (rotationAnim.animating) {
         // middle of the shape
-        val pivotCoords = movementAnimation.current + Vec2(2f, 2f)
+        val pivotCoords = posCoords + Vec2(SHAPE_CELLS_COUNT / 2f, SHAPE_CELLS_COUNT / 2f)
         val pivotPos = coordsToPos(ctx, pivotCoords)
 
         ctx.renderer.save()
         ctx.renderer.rotate(
-            rotationAnimation.current,
+            rotationAnim.current,
             pivotPos.x, pivotPos.y,
         )
+
         renderShape()
+
         ctx.renderer.restore()
     } else {
         renderShape(rotation)
@@ -916,25 +919,26 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
     }
 }
 
-fun checkOverTheEdge(newCoords: Coords, cellsOffsets: Array<Coords>): Coords {
-    var minCol = Int.MAX_VALUE
-    var maxCol = Int.MIN_VALUE
-    var minRow = Int.MAX_VALUE
-    var maxRow = Int.MIN_VALUE
+fun checkOverTheEdge(newPosCoords: Vec2, shapeIdx: Int): Vec2 {
+    var minCol = Float.MAX_VALUE
+    var maxCol = Float.MIN_VALUE
+    var minRow = Float.MAX_VALUE
+    var maxRow = Float.MIN_VALUE
 
-    for (cellOffsets in cellsOffsets) {
-        val cellCoords = newCoords + cellOffsets
-        minCol = kotlin.math.min(minCol, cellCoords.col)
-        maxCol = kotlin.math.max(maxCol, cellCoords.col)
-        minRow = kotlin.math.min(minRow, cellCoords.row)
-        maxRow = kotlin.math.max(maxRow, cellCoords.row)
+    val shapeOffsets = shapesMap[shapeIdx]
+    for (cellOffsets in shapeOffsets) {
+        val cellCoords = newPosCoords + cellOffsets.toVec2()
+        minCol = kotlin.math.min(minCol, cellCoords.x)
+        maxCol = kotlin.math.max(maxCol, cellCoords.x)
+        minRow = kotlin.math.min(minRow, cellCoords.y)
+        maxRow = kotlin.math.max(maxRow, cellCoords.y)
     }
 
-    val offsets = Coords(0, 0)
-    if (minCol < 0) offsets.col -= minCol
-    if (maxCol >= CELLS_COUNT) offsets.col -= (maxCol - CELLS_COUNT + 1)
-    if (minRow < 0) offsets.row -= minRow
-    if (maxRow >= CELLS_COUNT) offsets.row -= (maxRow - CELLS_COUNT + 1)
+    val offsets = Vec2(0f, 0f)
+    if (minCol < 0) offsets.x -= minCol
+    if (maxCol >= CELLS_COUNT - 1) offsets.x -= (maxCol - CELLS_COUNT + 1)
+    if (minRow < 0) offsets.y -= minRow
+    if (maxRow >= CELLS_COUNT - 1) offsets.y -= (maxRow - CELLS_COUNT + 1)
 
     return offsets
 }
@@ -1004,7 +1008,7 @@ fun GameContext.update(touch: Touch) {
 
                 val nextShapeIdx = shapesBag.peek()
                 onNextShape?.invoke(nextShapeIdx)
-                currentShape.checkOverlap(cells)
+                currentShape.checkOverlap()
 
                 pendingRotation = false
                 pendingPlacement = false
@@ -1019,12 +1023,12 @@ fun GameContext.update(touch: Touch) {
                         throw Exception("Game over")
                     }
 
-                    if (availableCoords != currentShape.coords) {
-                        currentShape.coords = availableCoords
-                        currentShape.beginMovementAnimation()
+                    if (availableCoords != currentShape.projectionCoords) {
+                        currentShape.projectionCoords = availableCoords
+                        currentShape.projectionAnim.begin(elapsedTime, availableCoords.toVec2())
                     }
 
-                    if (!currentShape.movementAnimation.animating) {
+                    if (!currentShape.projectionAnim.animating) {
                         placeShapeAndBeginExplosion(this)
                     } else {
                         state = GameState.AnimatingCurrentShape
@@ -1037,18 +1041,15 @@ fun GameContext.update(touch: Touch) {
                     if (pendingRotation) {
                         val newRotation = currentShape.rotation + 1
                         val newShapeIdx = shapeRotationIndex(currentShape.shape, newRotation)
-                        val newOffsets = shapesMap[newShapeIdx]
-                        val kicks = checkOverTheEdge(currentShape.coords, newOffsets)
+                        val kicks = checkOverTheEdge(currentShape.posCoords, newShapeIdx)
 
-                        currentShape.rotation = newRotation
-
-                        if (kicks.col != 0 || kicks.row != 0) {
-                            currentShape.coords += kicks
-                            currentShape.beginMovementAnimation()
+                        if (kicks.x != 0f || kicks.y != 0f) {
+                            currentShape.move(currentShape.posCoords + kicks)
                         }
 
-                        currentShape.checkOverlap(cells)
-                        currentShape.beginRotationAnimation()
+                        currentShape.rotation = newRotation
+                        currentShape.rotationAnim.begin(elapsedTime, newRotation * 90f)
+                        currentShape.checkOverlap()
 
                         pendingRotation = false
                     }
@@ -1059,7 +1060,7 @@ fun GameContext.update(touch: Touch) {
 
                     if (pendingPlacement) {
                         if (!currentShape.overlapping) {
-                            if (!currentShape.movementAnimation.animating) {
+                            if (!currentShape.projectionAnim.animating) {
                                 placeShapeAndBeginExplosion(this)
                             } else {
                                 state = GameState.AnimatingCurrentShape
@@ -1073,31 +1074,28 @@ fun GameContext.update(touch: Touch) {
                     if (!placed) {
                         // shape movement
 
-                        if (currentShape.shape > -1) {
-                            if (!currentShape.dragging && touch.isDown) {
-                                currentShape.dragging = true
-                            } else if (currentShape.dragging) {
-                                if (!touch.isDown) {
-                                    currentShape.dragging = false
-                                    currentShape.coordsPrev = currentShape.coords.copy()
-                                } else {
-                                    val diff = touch.position - touch.startPosition
-                                    val colsDiff = (diff / cellSize) * DRAG_SENSITIVITY
-                                    var newCoords = currentShape.coordsPrev + colsDiff.toCoords()
+                        if (!currentShape.dragging && touch.isDown) {
+                            currentShape.dragging = true
+                        } else if (currentShape.dragging) {
+                            if (!touch.isDown) {
+                                currentShape.dragging = false
+                                currentShape.posCoordsPrev = currentShape.posCoords.copy()
+                            } else {
+                                val diff = touch.position - touch.startPosition
+                                val colsDiff = (diff / cellSize) * DRAG_SENSITIVITY
+                                var newPosCoords = currentShape.posCoordsPrev + colsDiff
 
-                                    val shapeIdx = shapeRotationIndex(currentShape.shape, currentShape.rotation)
-                                    val cellsOffsets = shapesMap[shapeIdx]
-                                    val kicks = checkOverTheEdge(newCoords, cellsOffsets)
+                                val shapeIdx = shapeRotationIndex(currentShape.shape, currentShape.rotation)
+                                val kicks = checkOverTheEdge(newPosCoords, shapeIdx)
+                                newPosCoords += kicks
 
-                                    currentShape.coords = newCoords + kicks
-                                    currentShape.checkOverlap(cells)
-                                    currentShape.beginMovementAnimation()
-                                }
+                                currentShape.move(newPosCoords)
+                                currentShape.checkOverlap()
                             }
-
-                            currentShape.updateMovementAnimation()
-                            currentShape.updateRotationAnimation()
                         }
+
+                        currentShape.projectionAnim.update(elapsedTime)
+                        currentShape.rotationAnim.update(elapsedTime)
                     }
                 }
             }
@@ -1106,9 +1104,9 @@ fun GameContext.update(touch: Touch) {
         GameState.AnimatingCurrentShape -> {
             // shape dragging
 
-            currentShape.updateMovementAnimation()
+            currentShape.projectionAnim.update(elapsedTime)
 
-            if (!currentShape.movementAnimation.animating) {
+            if (!currentShape.projectionAnim.animating) {
                 placeShapeAndBeginExplosion(this)
                 state = GameState.Placing
             }
@@ -1159,19 +1157,28 @@ fun GameContext.update(touch: Touch) {
     }
 }
 
-fun renderCell(ctx: GameContext, coords: Coords, color: Int) {
-    renderCell(ctx, coords.toVec2(), color)
+fun renderCell(ctx: GameContext, coords: Coords, color: Int, stroke: Boolean = false) {
+    renderCell(ctx, coords.toVec2(), color, stroke)
 }
 
-fun renderCell(ctx: GameContext, coords: Vec2, color: Int) {
+fun renderCell(ctx: GameContext, coords: Vec2, color: Int, stroke: Boolean = false) {
     val (cellx, celly) = coordsToPos(ctx, coords)
     val p = ctx.cellPadding
     val r = ctx.cellSize * CELL_RADIUS_FRACTION
-    ctx.renderer.drawRoundRect(
-        cellx + p, celly + p, ctx.cellSize - p, ctx.cellSize - p,
-        r,
-        color,
-    )
+    if (stroke) {
+        ctx.renderer.strokeRoundRect(
+            cellx + p, celly + p, ctx.cellSize - p, ctx.cellSize - p,
+            r,
+            color,
+            2f * ctx.pixelDensity,
+        )
+    } else {
+        ctx.renderer.drawRoundRect(
+            cellx + p, celly + p, ctx.cellSize - p, ctx.cellSize - p,
+            r,
+            color,
+        )
+    }
 }
 
 fun GameContext.render() {

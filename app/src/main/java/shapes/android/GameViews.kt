@@ -57,7 +57,7 @@ fun AppFont.family(name: String, weight: FontWeight): FontFamily {
 }
 
 class CanvasRenderer : Renderer {
-    val paint = Paint()
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     var canvas: Canvas? = null
 
     override fun save() {
@@ -84,6 +84,22 @@ class CanvasRenderer : Renderer {
 
     override fun drawRoundRect(rect: Rect, radius: Float, color: Int) {
         drawRoundRect(rect.x, rect.y, rect.width, rect.height, radius, color)
+    }
+
+    override fun strokeRoundRect(
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        radius: Float,
+        color: Int,
+        strokeWidth: Float
+    ) {
+        paint.reset()
+        paint.style = Paint.Style.STROKE
+        paint.color = color
+        paint.strokeWidth = strokeWidth
+        canvas?.drawRoundRect(x, y, x + width, y + height, radius, radius, paint)
     }
 
     override fun drawRect(x: Float, y: Float, width: Float, height: Float, color: Int) {
