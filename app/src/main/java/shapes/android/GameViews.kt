@@ -178,6 +178,7 @@ fun Metrics.log() {
 class GameView(
     context: Context,
     onScoreChange: (Int) -> Unit,
+    onPlaceShape: () -> Unit,
     onNextShape: (Int) -> Unit,
 ) : View(context) {
     var running = false
@@ -186,6 +187,7 @@ class GameView(
         context.resources.displayMetrics.density,
         context.resources.displayMetrics.scaledDensity,
         onScoreChange,
+        onPlaceShape,
         onNextShape,
     )
     val touch = Touch()
@@ -207,7 +209,7 @@ class GameView(
     }
 
     fun debugSpawnShape() {
-        game.currentShape = CurrentShape(0)
+        game.currentShape = CurrentShape(game, 0)
     }
 
     //

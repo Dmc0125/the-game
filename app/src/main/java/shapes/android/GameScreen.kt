@@ -1,13 +1,26 @@
 package shapes.android
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableFloatState
+import androidx.compose.runtime.MutableIntState
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -20,6 +33,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
 import shapes.game.FONT_DMMONO
 import shapes.game.FONT_MANROPE
 import shapes.game.FontWeight
@@ -62,10 +76,32 @@ fun GameScreen() {
 
         TopBar(score.value, onViewReady = { nextShapeView.value = it })
 
-        GameBoard(
-            onViewReady = { gameView.value = it },
-            onScoreChange = { score.value = it },
-            onNextShape = { nextShapeView.value?.onNextShape(it) },
+        val timerController = remember { TimerController() }
+        Timer(timerController)
+
+        // game
+
+        AndroidView(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .neobrutalistShadow()
+                .graphicsLayer { clip = false },
+            factory = { context ->
+                GameView(
+                    context,
+                    onScoreChange = { score.value = it },
+                    onPlaceShape = { timerController.stop() },
+                    onNextShape = {
+                        nextShapeView.value?.onNextShape(it)
+                        timerController.start(10f)
+                    },
+                ).also {
+                    gameView.value = it
+                    it.resume()
+                }
+            },
+            onRelease = { gameView -> gameView.pause() },
         )
 
         GameControls(
@@ -122,8 +158,8 @@ fun TopBar(
             BasicText(
                 text = "SCORE",
                 style = TextStyle(
-                    fontSize = 16.sp,
-                    fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Medium),
+                    fontSize = 12.sp,
+                    fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Bold),
                     color = Color.Black,
                 ),
             )
@@ -172,8 +208,8 @@ fun TopBar(
             BasicText(
                 text = "NEXT",
                 style = TextStyle(
-                    fontSize = 16.sp,
-                    fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Medium),
+                    fontSize = 12.sp,
+                    fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Bold),
                     color = Color.White,
                 ),
             )
@@ -195,28 +231,83 @@ fun TopBar(
     }
 }
 
+sealed interface TimerCommand {
+    data class Start(val i: Int, val duration: Float) : TimerCommand
+    data object Stop : TimerCommand
+}
+
+@Stable
+class TimerController {
+    var commandCount by mutableStateOf(0)
+    var command by mutableStateOf<TimerCommand?>(null)
+
+    fun stop() {
+        command = TimerCommand.Stop
+    }
+
+    fun start(duration: Float) {
+        command = TimerCommand.Start(commandCount, duration)
+        commandCount += 1
+    }
+}
+
 @Composable
-fun GameBoard(
-    onViewReady: (GameView) -> Unit,
-    onScoreChange: (Int) -> Unit,
-    onNextShape: (Int) -> Unit,
-) {
-    AndroidView(
+fun Timer(controller: TimerController) {
+    Row(
         modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(1f)
-            .neobrutalistShadow()
-            .graphicsLayer {
-                clip = false
-            },
-        factory = { context ->
-            GameView(context, onScoreChange, onNextShape).also {
-                onViewReady(it)
-                it.resume()
+            .fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val progress = remember { Animatable(1f) }
+        val duration = remember { mutableFloatStateOf(0f) }
+
+        LaunchedEffect(controller.command) {
+            val command = controller.command
+            when (command) {
+                is TimerCommand.Start -> {
+                    duration.value = command.duration
+
+                    progress.snapTo(1f)
+                    progress.animateTo(
+                        0f,
+                        animationSpec = tween(
+                            durationMillis = command.duration.toInt() * 1000,
+                            easing = LinearEasing,
+                        )
+                    )
+                }
+
+                TimerCommand.Stop -> progress.stop()
+                null -> Unit
             }
-        },
-        onRelease = { gameView -> gameView.pause() },
-    )
+        }
+
+        BasicText(
+            text = "%.01fs".format(duration.value * progress.value),
+            modifier = Modifier.width(35.dp),
+            style = TextStyle(
+                fontSize = 12.sp,
+                fontFamily = AppFont.family(FONT_DMMONO, FontWeight.Medium),
+                color = Color.Black,
+            )
+        )
+
+        val padding = 3
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(12.dp)
+                .background(Color(shapes.game.Color.BLACK), RoundedCornerShape(RADIUS.dp))
+                .padding(padding.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(progress.value)
+                    .fillMaxHeight()
+                    .background(Color(shapes.game.Color.BLUE), RoundedCornerShape((RADIUS - padding).dp)),
+            )
+        }
+    }
 }
 
 @Composable
@@ -252,7 +343,7 @@ fun GameControls(
             BasicText(
                 text = "Place",
                 style = TextStyle(
-                    fontSize = 16.sp,
+                    fontSize = 14.sp,
                     fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Bold),
                     color = Color.Black,
                 )
