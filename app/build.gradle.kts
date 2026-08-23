@@ -4,6 +4,7 @@ plugins {
 }
 
 val logDebug = providers.gradleProperty("logDebug").map { it.toBoolean() }.orElse(false)
+val gameOver = providers.gradleProperty("gameOver").map { it.toBoolean() }.orElse(false)
 
 android {
     namespace = "shapes"
@@ -21,6 +22,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("Boolean", "LOG_DEBUG", logDebug.get().toString())
+        buildConfigField("Boolean", "GAME_OVER", gameOver.get().toString())
     }
 
     buildTypes {
@@ -43,6 +45,8 @@ android {
 }
 
 dependencies {
+    implementation(libs.androidx.datastore)
+
     implementation(platform(libs.androidx.compose.bom))
 
     implementation(libs.androidx.activity.compose)

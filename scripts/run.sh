@@ -23,12 +23,17 @@ echo "Using device: $DEVICE_SERIAL"
 adb -s "$DEVICE_SERIAL" logcat -c # clear logcat
 
 # build
-LOG_DEBUG=false
-if [[ $# -gt 0 && "$1" == "--log-debug" ]]; then
-  LOG_DEBUG=true
-fi
+GRADLE_ARGS=()
 
-ASSEMBLE_ARGS="-PlogDebug=$LOG_DEBUG"
+for arg in "$@"; do
+    case "$arg" in
+        --*=*) GRADLE_ARGS+=("-P${arg#--}") ;;
+        --*) GRADLE_ARGS+=("-P${arg#--}=true") ;;
+        *) GRADLE_ARGS+=("$arg") ;;
+    esac
+done
+
+ASSEMBLE_ARGS="${GRADLE_ARGS[@]}"
 echo "Running assemble with: $ASSEMBLE_ARGS"
 ./gradlew assembleDebug $ASSEMBLE_ARGS
 

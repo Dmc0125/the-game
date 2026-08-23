@@ -190,12 +190,12 @@ fun Metrics.log() {
     }
 }
 
-
 class GameView(
     context: Context,
     onScoreChange: (Int) -> Unit,
     onPlaceShape: () -> Unit,
     onNextShape: (Int) -> Unit,
+    onGameOver: () -> Unit,
 ) : View(context) {
     var running = false
     var lastFrameTime: Long = 0
@@ -205,6 +205,7 @@ class GameView(
         onScoreChange,
         onPlaceShape,
         onNextShape,
+        onGameOver,
     )
     val touch = Touch()
     var renderer = CanvasRenderer()

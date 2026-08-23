@@ -5,9 +5,6 @@
 run:
 	./scripts/run.sh
 
-run-debug:
-	./scripts/run.sh --log-debug
-
 adb-pair:
 	adb pair $(DEVICE_IP):$(PORT)
 

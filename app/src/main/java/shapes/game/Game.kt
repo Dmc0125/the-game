@@ -729,6 +729,7 @@ enum class GameState {
     Placing,
     AnimatingCurrentShape,
     AnimatingCellsExplosion,
+    GameOver,
 }
 
 class GameContext(
@@ -737,6 +738,7 @@ class GameContext(
     val onScoreChange: ((Int) -> Unit)? = null,
     val onPlaceShape: (() -> Unit)? = null,
     val onNextShape: ((Int) -> Unit)? = null,
+    val onGameOver: (() -> Unit)? = null,
 ) {
     var dt = 0f
     var elapsedTime = 0f
@@ -766,6 +768,23 @@ class GameContext(
     val screenShake = ScreenShake(this)
     var shapesPlaced = 0
     var score = 0
+}
+
+fun GameContext.reset() {
+    dt = 0f
+    elapsedTime = 0f
+
+    shapesPlaced = 0
+    score = 0
+    onScoreChange?.invoke(score)
+
+    for (cell in cells) {
+        cell.filled = false
+    }
+
+    state = GameState.Countdown
+    shapesBag.current = -1
+    currentShape.shape = -1
 }
 
 fun GameContext.addScore(amount: Int) {
@@ -1003,7 +1022,9 @@ fun GameContext.update(touch: Touch) {
                 if (availableCoords == null) availableCoords = currentShape.availablePlacementCoords(3)
 
                 if (availableCoords == null) {
-                    throw Exception("Game over")
+                    onGameOver?.invoke()
+                    state = GameState.GameOver
+                    return
                 }
 
                 val nextShapeIdx = shapesBag.peek()
@@ -1020,7 +1041,9 @@ fun GameContext.update(touch: Touch) {
 
                     val availableCoords = currentShape.availablePlacementCoords()
                     if (availableCoords == null) {
-                        throw Exception("Game over")
+                        onGameOver?.invoke()
+                        state = GameState.GameOver
+                        return
                     }
 
                     if (availableCoords != currentShape.projectionCoords) {
@@ -1154,6 +1177,8 @@ fun GameContext.update(touch: Touch) {
                 state = GameState.Placing
             }
         }
+
+        GameState.GameOver -> Unit
     }
 }
 
@@ -1258,6 +1283,8 @@ fun GameContext.render() {
                 }
             }
         }
+
+        GameState.GameOver -> Unit
     }
 
     if (screenShake.animating) {

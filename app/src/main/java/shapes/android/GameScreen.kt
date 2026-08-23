@@ -37,6 +37,7 @@ import kotlinx.coroutines.delay
 import shapes.game.FONT_DMMONO
 import shapes.game.FONT_MANROPE
 import shapes.game.FontWeight
+import shapes.game.reset
 
 private fun Modifier.forwardUncomsumedTouches(onTouch: (PointerEvent) -> Unit): Modifier {
     return pointerInput(Unit) {
@@ -81,28 +82,101 @@ fun GameScreen() {
 
         // game
 
-        AndroidView(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .neobrutalistShadow()
                 .graphicsLayer { clip = false },
-            factory = { context ->
-                GameView(
-                    context,
-                    onScoreChange = { score.value = it },
-                    onPlaceShape = { timerController.stop() },
-                    onNextShape = {
-                        nextShapeView.value?.onNextShape(it)
-                        timerController.start(10f)
-                    },
-                ).also {
-                    gameView.value = it
-                    it.resume()
+        ) {
+            val gameOver = remember { mutableStateOf(shapes.BuildConfig.GAME_OVER ?: false) }
+
+            AndroidView(
+                modifier = Modifier.fillMaxSize().graphicsLayer { clip = false },
+                factory = { context ->
+                    GameView(
+                        context,
+                        onScoreChange = { score.value = it },
+                        onPlaceShape = { timerController.stop() },
+                        onNextShape = {
+                            nextShapeView.value?.onNextShape(it)
+                            timerController.start(10f)
+                        },
+                        onGameOver = {
+                            gameOver.value = true
+                            timerController.stop()
+                        },
+                    ).also {
+                        gameView.value = it
+                        it.resume()
+
+                        if (shapes.BuildConfig.GAME_OVER) {
+                            it.game.state = shapes.game.GameState.GameOver
+                        }
+                    }
+                },
+                onRelease = { gameView -> gameView.pause() },
+            )
+
+            if (gameOver.value) {
+                var previousHighScore = Storage.highScore()
+                if (score.value > previousHighScore) {
+                    Storage.saveHighScore(score.value)
+                    previousHighScore = score.value
                 }
-            },
-            onRelease = { gameView -> gameView.pause() },
-        )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Color(shapes.game.Color.addAlpha(200, shapes.game.Color.BLACK)),
+                            RoundedCornerShape(RADIUS.dp)
+                        ),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    BasicText(
+                        text = "Out of place",
+                        style = TextStyle(
+                            fontSize = 32.sp,
+                            color = Color.White,
+                            fontFamily = AppFont.family(
+                                shapes.game.FONT_MANROPE, FontWeight.Bold
+                            ),
+                        )
+                    )
+
+                    BasicText(
+                        text = "Score: ${score.value}",
+                        style = TextStyle(
+                            fontSize = 16.sp,
+                            color = Color.White,
+                            fontFamily = AppFont.family(
+                                shapes.game.FONT_MANROPE, FontWeight.Bold
+                            ),
+                        )
+                    )
+                    BasicText(
+                        text = "High score: ${previousHighScore}",
+                        style = TextStyle(
+                            fontSize = 16.sp,
+                            color = Color.White,
+                            fontFamily = AppFont.family(
+                                shapes.game.FONT_MANROPE, FontWeight.Bold
+                            ),
+                        )
+                    )
+
+                    Button(
+                        text = "Play again",
+                        onClick = {
+                            gameOver.value = false
+                            gameView.value?.game?.reset()
+                        },
+                    )
+                }
+            }
+        }
 
         GameControls(
             onRotate = { gameView.value?.handleShapeRotate() },
@@ -300,12 +374,14 @@ fun Timer(controller: TimerController) {
                 .background(Color(shapes.game.Color.BLACK), RoundedCornerShape(RADIUS.dp))
                 .padding(padding.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(progress.value)
-                    .fillMaxHeight()
-                    .background(Color(shapes.game.Color.BLUE), RoundedCornerShape((RADIUS - padding).dp)),
-            )
+            if (progress.value > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress.value)
+                        .fillMaxHeight()
+                        .background(Color(shapes.game.Color.BLUE), RoundedCornerShape((RADIUS - padding).dp)),
+                )
+            }
         }
     }
 }
