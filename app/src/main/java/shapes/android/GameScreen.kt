@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -22,9 +23,12 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
 import shapes.game.FONT_DMMONO
 import shapes.game.FONT_MANROPE
 import shapes.game.FontWeight
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 private fun Modifier.forwardUncomsumedTouches(onTouch: (PointerEvent) -> Unit): Modifier {
     return pointerInput(Unit) {
@@ -64,6 +68,7 @@ fun GameScreen(
                     DebugAction.FillRow -> gameView.value?.debugFillRow()
                     DebugAction.SpawnSingleCellShape -> gameView.value?.debugSpawnShape()
                     DebugAction.PlaceShape -> gameView.value?.handleShapePlace()
+                    DebugAction.FillDouble -> gameView.value?.debugFillDouble()
                 }
             }
             DebugActions.register(handler)
@@ -192,6 +197,24 @@ fun TopBar(
     val height = 90.dp
     val verticalPadding = 12.dp
 
+    val previousScore = remember { mutableStateOf(score) }
+    val scoreScale = remember { Animatable(1f) }
+
+    LaunchedEffect(score) {
+        if (score <= previousScore.value) {
+            scoreScale.snapTo(1f)
+            previousScore.value = score
+            return@LaunchedEffect
+        }
+
+        val nextScale = (scoreScale.value + 0.035f).coerceAtMost(1.3f)
+        scoreScale.animateTo(nextScale, tween(35))
+
+        delay(140.milliseconds)
+
+        scoreScale.animateTo(1f, tween(220))
+    }
+
     Row(
         Modifier
             .fillMaxWidth()
@@ -219,7 +242,8 @@ fun TopBar(
 
             Column(
                 modifier = Modifier
-                    .fillMaxHeight(),
+                    .fillMaxHeight()
+                    .scale(scoreScale.value),
                 verticalArrangement = Arrangement.Center,
             ) {
                 BasicText(

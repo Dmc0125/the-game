@@ -253,10 +253,24 @@ class GameView(
             cell.filled = true
             cell.color = colors[0]
             cell.filledAt = game.elapsedTime
-            cell.beginExplosion(kotlin.math.abs(col - center) * EXPLOSION_DELAY)
         }
 
-        game.state = GameState.AnimatingCellsExplosion
+        clearFilled(game)
+    }
+
+    fun debugFillDouble() {
+        val centerRow = CELLS_COUNT / 2
+
+        for (row in arrayOf(centerRow, centerRow + 1)) {
+            for (col in 0..<CELLS_COUNT) {
+                val cell = game.cells[row * CELLS_COUNT + col]
+                cell.filled = true
+                cell.color = colors[0]
+                cell.filledAt = game.elapsedTime
+            }
+        }
+
+        clearFilled(game)
     }
 
     fun debugSpawnShape() {

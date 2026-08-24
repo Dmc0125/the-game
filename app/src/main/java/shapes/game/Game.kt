@@ -1,6 +1,7 @@
 package shapes.game
 
 import android.os.Trace
+import kotlin.math.E
 import kotlin.math.PI
 import kotlin.math.pow
 import kotlin.random.Random
@@ -16,12 +17,16 @@ const val CELL_RADIUS_FRACTION = 0.25f
 const val PLAYGROUND_PADDING_FRACTION = 0.02f
 const val DRAG_SENSITIVITY = 1.75f
 const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
+
+const val EXPLOSION_START_CLEAR_DELAY = 0.2f
 const val EXPLOSION_CHARGE_ANIMATION_DURATION = 0.4f
 const val EXPLOSION_CELL_PULSE_COUNT = 2
 const val EXPLOSION_CELL_SCALE_MAX = 1.35f
 const val EXPLOSION_CELL_SCALE_MIN = 0.9f
 const val EXPLOSION_PARTICLE_LIFESPAN = 0.6f
 const val EXPLOSION_DELAY = 0.02f
+const val DEFAULT_CELL_CLEAR_REWARD = 10
+
 const val PARTICLE_COUNT_PER_CELL = 10
 
 object Color {
@@ -330,19 +335,65 @@ fun CurrentShape.checkOverlap() {
     }
 }
 
-fun CurrentShape.availablePlacementCoords(rot: Int = -1): Coords? {
-    val shapeIdx = shapeRotationIndex(shape, if (rot == -1) this.rotation else rot)
-    val visited = BooleanArray(CELLS_COUNT * CELLS_COUNT) // cell[cellIndex] = visited
-    val queue = IntArray(CELLS_COUNT * CELLS_COUNT) // cell indeces
+fun currentShapeAvailableCoords(currentShape: CurrentShape, cells: Array<Cell>, rot: Int = -1): Coords? {
+    Trace.beginSection("availableCoords")
+
+    val shapeIdx = shapeRotationIndex(currentShape.shape, if (rot == -1) currentShape.rotation else rot)
+    val shapeOffsets = shapesMap[shapeIdx]
+
+    // coords represent shape grid top left position, which can be negative, since
+    // the cells inside the shape grid are offsets from top left
+    //
+    // therefore we need offset this position by shape size so the idx stays positive
+    //
+    // for each axis, each occupied cell is: 0 <= origin + shapeOffset < CELLS_COUNT
+    // where origin is the top left position of the shape grid
+    //
+    // therefore -minShapeOffset <= origin <= CELLS_COUUNT - 1 - maxShapeOffset
+
+    // find shape dimensions
+
+    // determine min/max offset col/row
+
+    var minOffsetCol = Int.MAX_VALUE
+    var maxOffsetCol = Int.MIN_VALUE
+    var minOffsetRow = Int.MAX_VALUE
+    var maxOffsetRow = Int.MIN_VALUE
+
+    for (cellOffset in shapeOffsets) {
+        minOffsetCol = kotlin.math.min(minOffsetCol, cellOffset.col)
+        maxOffsetCol = kotlin.math.max(maxOffsetCol, cellOffset.col)
+        minOffsetRow = kotlin.math.min(minOffsetRow, cellOffset.row)
+        maxOffsetRow = kotlin.math.max(maxOffsetRow, cellOffset.row)
+    }
+
+    val minCandidateCol = -minOffsetCol
+    val maxCandidateCol = CELLS_COUNT - 1 - maxOffsetCol
+    val minCandidateRow = -minOffsetRow
+    val maxCandidateRow = CELLS_COUNT - 1 - maxOffsetRow
+
+    // determine valid cols/rows count
+
+    val validColsCount = maxCandidateCol - minCandidateCol + 1
+    val validRowsCount = maxCandidateRow - minCandidateRow + 1
+
+    val visited = BooleanArray(validColsCount * validRowsCount) // cell[cellIndex] = visited
+    val queue = IntArray(validColsCount * validRowsCount) // cell indeces
     var queueStart = 0
     var queueEnd = 0
 
+    fun index(col: Int, row: Int): Int {
+        val offsetRow = row - minCandidateRow
+        val offsetCol = col - minCandidateCol
+        return offsetRow * validColsCount + offsetCol
+    }
+
     fun enqueue(col: Int, row: Int) {
-        if (col !in 0..<CELLS_COUNT || row !in 0..<CELLS_COUNT) {
+        if (col !in minCandidateCol..maxCandidateCol || row !in minCandidateRow..maxCandidateRow) {
             return
         }
 
-        val idx = coordsToIdx(col, row)
+        val idx = index(col, row)
         if (visited[idx]) {
             return
         }
@@ -352,7 +403,7 @@ fun CurrentShape.availablePlacementCoords(rot: Int = -1): Coords? {
         queueEnd += 1
     }
 
-    enqueue(projectionCoords.col, projectionCoords.row)
+    enqueue(currentShape.projectionCoords.col, currentShape.projectionCoords.row)
 
     var resultCoords: Coords? = null
     search@ while (queueStart < queueEnd) {
@@ -360,25 +411,19 @@ fun CurrentShape.availablePlacementCoords(rot: Int = -1): Coords? {
         queueStart += 1
 
         val tryCoords = Coords(
-            tryIdx % CELLS_COUNT,
-            tryIdx / CELLS_COUNT,
+            tryIdx % validColsCount, // offsetCol
+            tryIdx / validColsCount, // offsetRow
         )
+        tryCoords.col += minCandidateCol
+        tryCoords.row += minCandidateRow
 
         var valid = true
         for (cellOffset in shapesMap[shapeIdx]) {
             val tryCellCoords = tryCoords + cellOffset
-
-            if (tryCellCoords.col !in 0..<CELLS_COUNT || tryCellCoords.row !in 0..<CELLS_COUNT) {
-                valid = false
-                break
-            }
-
             val idx = coordsToIdx(tryCellCoords.col, tryCellCoords.row)
-            if (idx < 0 || idx > ctx.cells.size - 1) {
-                continue@search
-            }
+            assert(idx >= 0 && idx < cells.size) // is guaranteed by enqueue
 
-            val cell = ctx.cells[idx]
+            val cell = cells[idx]
             if (cell.filled) {
                 valid = false
                 break
@@ -400,6 +445,7 @@ fun CurrentShape.availablePlacementCoords(rot: Int = -1): Coords? {
         enqueue(tryCoords.col - 1, tryCoords.row - 1) // up left
     }
 
+    Trace.endSection()
     return resultCoords
 }
 
@@ -523,7 +569,11 @@ fun ScoreAnnouncer.init(coords: Coords) {
 }
 
 fun ScoreAnnouncer.begin(amount: Int) {
-    text = "+$amount"
+    if (amount > 0) {
+        text = "+$amount"
+    } else {
+        text = "$amount"
+    }
     currentPos = startPos.copy()
     startTime = ctx.elapsedTime
     animating = true
@@ -578,7 +628,7 @@ data class Cell(
     var filledAt = 0f
     var explosionState = CellExplosionState.None
 
-    fun lerpColor(start: Int, end: Int, progress: Float): Int {
+    private fun lerpColor(start: Int, end: Int, progress: Float): Int {
         val a = (start shr 24) and 0xFF
         val r = (start shr 16) and 0xFF
         val g = (start shr 8) and 0xFF
@@ -604,6 +654,7 @@ data class Cell(
     val pulseAnim = Animation(0f, shrinkingDuration, lerp = ::lerp)
     val rotationAnim = Animation(0f, shrinkingDuration, lerp = ::lerp, easing = AnimationEasing.EaseOutSquared)
 
+    var scoreReward = 10
     val scoreAnnouncer = ScoreAnnouncer(ctx)
 }
 
@@ -624,53 +675,55 @@ fun Cell.beginExplosion(delay: Float) {
     pulseAnim.begin(ctx.elapsedTime, 1.2f)
 }
 
-fun Cell.updateExplosion() {
-    assert(explosionState != CellExplosionState.None) { "Explosion animation is not active" }
+fun cellUpdateExplosion(cell: Cell, elapsedTime: Float): Boolean {
+    assert(cell.explosionState != CellExplosionState.None) { "Explosion animation is not active" }
 
-    chargeColorAnim.update(ctx.elapsedTime)
-    pulseAnim.update(ctx.elapsedTime)
+    cell.chargeColorAnim.update(elapsedTime)
+    cell.pulseAnim.update(elapsedTime)
 
-    when (explosionState) {
+    when (cell.explosionState) {
         CellExplosionState.Growing -> {
-            if (!pulseAnim.animating && !chargeColorAnim.animating) {
-                explosionState = CellExplosionState.Shrinking
+            if (!cell.pulseAnim.animating && !cell.chargeColorAnim.animating) {
+                cell.explosionState = CellExplosionState.Shrinking
 
-                chargeColorAnim.delay = 0f
-                chargeColorAnim.duration = shrinkingDuration
-                chargeColorAnim.easing = AnimationEasing.EaseOutSquared
-                chargeColorAnim.begin(ctx.elapsedTime, Color.addAlpha(0, chargeColorAnim.current))
+                cell.chargeColorAnim.delay = 0f
+                cell.chargeColorAnim.duration = cell.shrinkingDuration
+                cell.chargeColorAnim.easing = AnimationEasing.EaseOutSquared
+                cell.chargeColorAnim.begin(elapsedTime, Color.addAlpha(0, cell.chargeColorAnim.current))
 
-                pulseAnim.delay = 0f
-                pulseAnim.duration = shrinkingDuration
-                pulseAnim.easing = AnimationEasing.EaseOutSquared
-                pulseAnim.begin(ctx.elapsedTime, 0.5f)
+                cell.pulseAnim.delay = 0f
+                cell.pulseAnim.duration = cell.shrinkingDuration
+                cell.pulseAnim.easing = AnimationEasing.EaseOutSquared
+                cell.pulseAnim.begin(elapsedTime, 0.5f)
 
-                rotationAnim.animating = false
-                rotationAnim.current = 0f
-                rotationAnim.begin(ctx.elapsedTime, 45f)
+                cell.rotationAnim.animating = false
+                cell.rotationAnim.current = 0f
+                cell.rotationAnim.begin(elapsedTime, 45f)
 
-                scoreAnnouncer.begin(10)
+                return true
             }
         }
 
         CellExplosionState.Shrinking -> {
-            rotationAnim.update(ctx.elapsedTime)
+            cell.rotationAnim.update(elapsedTime)
 
-            if (!pulseAnim.animating && !chargeColorAnim.animating && !rotationAnim.animating) {
-                explosionState = CellExplosionState.None
+            if (!cell.pulseAnim.animating && !cell.chargeColorAnim.animating && !cell.rotationAnim.animating) {
+                cell.explosionState = CellExplosionState.None
             }
         }
 
         CellExplosionState.None -> Unit
     }
+
+    return false
 }
 
-enum class GameState {
-    Countdown,
-    Placing,
-    AnimatingCurrentShape,
-    AnimatingCellsExplosion,
-    GameOver,
+sealed interface GameState {
+    data object Countdown : GameState
+    data object Placing : GameState
+    data class AnimatingCurrentShape(val forced: Boolean) : GameState
+    data object AnimatingCellsExplosion : GameState
+    data object GameOver : GameState
 }
 
 typealias onScoreChange = (Int) -> Unit
@@ -758,9 +811,7 @@ fun coordsToIdx(col: Int, row: Int): Int {
     return col + row * CELLS_COUNT
 }
 
-fun placeShapeAndBeginExplosion(ctx: GameContext) {
-    // place
-
+fun placeShape(ctx: GameContext, forced: Boolean) {
     for (cellCoords in ctx.currentShape.cells()) {
         val idx = coordsToIdx(cellCoords.col, cellCoords.row)
         val cell = ctx.cells[idx]
@@ -768,17 +819,18 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
         cell.filled = true
         cell.filledAt = ctx.elapsedTime
         cell.color = ctx.currentShape.color
-        cell.scoreAnnouncer.begin(1)
 
-        ctx.addScore(1)
+        val score = if (forced) -1 else 1
+        cell.scoreAnnouncer.begin(score)
+        ctx.addScore(score)
     }
 
     ctx.shapesPlaced += 1
     ctx.onPlaceShape?.invoke()
     ctx.currentShape.shape = -1
+}
 
-    // begin explosion
-
+fun clearFilled(ctx: GameContext) {
     val filledRows = IntArray(CELLS_COUNT) { -1 }
     val filledCols = IntArray(CELLS_COUNT) { -1 }
 
@@ -790,50 +842,58 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
         val coordsToIdx: (fixedCoord: Int, movingCoord: Int) -> Int,
     )
 
-    fun Result.process(movingCoord: Int) {
-        val idx = coordsToIdx(fixedCoord, movingCoord)
+    fun resultProcess(result: Result, movingCoord: Int) {
+        val idx = result.coordsToIdx(result.fixedCoord, movingCoord)
         val cell = ctx.cells[idx]
+
         if (!cell.filled) {
-            filled = false
+            result.filled = false
         }
-        if (prevFillTime < cell.filledAt) {
-            prevFillTime = cell.filledAt
-            start = movingCoord
+
+        if (result.prevFillTime < cell.filledAt) {
+            result.prevFillTime = cell.filledAt
+            result.start = movingCoord
         }
     }
 
-    fun Result.beginExplosion(elapsedTime: Float): Float {
+    fun resultBeginExplosion(result: Result, elapsedTime: Float, delay: Float, scoreMultiplier: Int): Float {
+        println(delay)
+
         // first
         run {
-            val idx = coordsToIdx(fixedCoord, start)
+            val idx = result.coordsToIdx(result.fixedCoord, result.start)
             val cell = ctx.cells[idx]
-            cell.beginExplosion(0f)
+            cell.beginExplosion(delay)
         }
 
         // delays
+
         var offset = 1
         while (true) {
-            val preCoord = start - offset
-            val postCoord = start + offset
+            val preCoord = result.start - offset
+            val postCoord = result.start + offset
 
             if (preCoord < 0 && postCoord >= CELLS_COUNT) {
                 break
             }
 
-            val delay = offset * EXPLOSION_DELAY
+            val cellDelay = offset * EXPLOSION_DELAY + delay
 
             if (preCoord >= 0) {
-                val idx = coordsToIdx(fixedCoord, preCoord)
-                val left = ctx.cells[idx]
+                val left = ctx.cells[result.coordsToIdx(result.fixedCoord, preCoord)]
+                left.scoreReward = scoreMultiplier * DEFAULT_CELL_CLEAR_REWARD
+
                 if (left.explosionState == CellExplosionState.None) {
-                    left.beginExplosion(delay)
+                    left.beginExplosion(cellDelay)
                 }
             }
 
             if (postCoord < CELLS_COUNT) {
-                val right = ctx.cells[coordsToIdx(fixedCoord, postCoord)]
+                val right = ctx.cells[result.coordsToIdx(result.fixedCoord, postCoord)]
+                right.scoreReward = scoreMultiplier * DEFAULT_CELL_CLEAR_REWARD
+
                 if (right.explosionState == CellExplosionState.None) {
-                    right.beginExplosion(delay)
+                    right.beginExplosion(cellDelay)
                 }
             }
 
@@ -845,7 +905,9 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
     }
 
     var animating = false
-    var maxDelay = 0f
+    var scoreMultiplier = 1
+    var rowDelay = 0f
+    var colDelay = 0f
 
     for (i in 0..<CELLS_COUNT) {
         // row -> i = row, j = col
@@ -862,21 +924,29 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
                 break
             }
 
-            if (rowResult.filled) rowResult.process(j)
-            if (colResult.filled) colResult.process(j)
+            if (rowResult.filled) {
+                resultProcess(rowResult, j)
+            }
+            if (colResult.filled) {
+                resultProcess(colResult, j)
+            }
         }
 
-
         if (rowResult.filled) {
-            // begin
             animating = true
-            maxDelay = kotlin.math.max(maxDelay, rowResult.beginExplosion(ctx.elapsedTime))
+            resultBeginExplosion(rowResult, ctx.elapsedTime, rowDelay, scoreMultiplier)
+
+            scoreMultiplier += 1
+            rowDelay += EXPLOSION_START_CLEAR_DELAY
+
         }
 
         if (colResult.filled) {
-            // begin
             animating = true
-            maxDelay = kotlin.math.max(maxDelay, colResult.beginExplosion(ctx.elapsedTime))
+            resultBeginExplosion(colResult, ctx.elapsedTime, colDelay, scoreMultiplier)
+
+            scoreMultiplier += 1
+            colDelay += EXPLOSION_START_CLEAR_DELAY
         }
     }
 
@@ -955,7 +1025,8 @@ fun GameContext.update(touch: Touch) {
         }
     }
 
-    when (state) {
+    val currentState = state
+    when (currentState) {
         GameState.Countdown -> {
             if (shapes.BuildConfig.DEBUG) {
                 state = GameState.Placing
@@ -973,10 +1044,10 @@ fun GameContext.update(touch: Touch) {
                 val shapeIdx = shapesBag.next()
                 currentShape = CurrentShape(this, shapeIdx)
 
-                var availableCoords = currentShape.availablePlacementCoords(0)
-                if (availableCoords == null) availableCoords = currentShape.availablePlacementCoords(1)
-                if (availableCoords == null) availableCoords = currentShape.availablePlacementCoords(2)
-                if (availableCoords == null) availableCoords = currentShape.availablePlacementCoords(3)
+                var availableCoords = currentShapeAvailableCoords(currentShape, cells, 0)
+                if (availableCoords == null) availableCoords = currentShapeAvailableCoords(currentShape, cells, 1)
+                if (availableCoords == null) availableCoords = currentShapeAvailableCoords(currentShape, cells, 2)
+                if (availableCoords == null) availableCoords = currentShapeAvailableCoords(currentShape, cells, 3)
 
                 if (availableCoords == null) {
                     onGameOver?.invoke()
@@ -1001,7 +1072,7 @@ fun GameContext.update(touch: Touch) {
                     // force place
                     Trace.beginSection("forcePlace")
 
-                    val availableCoords = currentShape.availablePlacementCoords()
+                    val availableCoords = currentShapeAvailableCoords(currentShape, cells)
                     if (availableCoords == null) {
                         onGameOver?.invoke()
                         state = GameState.GameOver
@@ -1011,15 +1082,19 @@ fun GameContext.update(touch: Touch) {
 
                     Trace.endSection()
 
+                    var forced = false
+
                     if (availableCoords != currentShape.projectionCoords) {
                         currentShape.projectionCoords = availableCoords
                         currentShape.projectionAnim.begin(elapsedTime, availableCoords.toVec2())
+                        forced = true
                     }
 
                     if (!currentShape.projectionAnim.animating) {
-                        placeShapeAndBeginExplosion(this)
+                        placeShape(this, forced)
+                        clearFilled(this)
                     } else {
-                        state = GameState.AnimatingCurrentShape
+                        state = GameState.AnimatingCurrentShape(true)
                     }
                 } else {
                     // process inputs
@@ -1049,9 +1124,10 @@ fun GameContext.update(touch: Touch) {
                     if (pendingPlacement) {
                         if (!currentShape.overlapping) {
                             if (!currentShape.projectionAnim.animating) {
-                                placeShapeAndBeginExplosion(this)
+                                placeShape(this, false)
+                                clearFilled(this)
                             } else {
-                                state = GameState.AnimatingCurrentShape
+                                state = GameState.AnimatingCurrentShape(false)
                             }
 
                             placed = true
@@ -1089,13 +1165,14 @@ fun GameContext.update(touch: Touch) {
             }
         }
 
-        GameState.AnimatingCurrentShape -> {
+        is GameState.AnimatingCurrentShape -> {
             // shape dragging
 
             currentShape.projectionAnim.update(elapsedTime)
 
             if (!currentShape.projectionAnim.animating) {
-                placeShapeAndBeginExplosion(this)
+                placeShape(this, currentState.forced)
+                clearFilled(this)
                 state = GameState.Placing
             }
         }
@@ -1110,10 +1187,14 @@ fun GameContext.update(touch: Touch) {
                 }
 
                 if (cell.explosionState != CellExplosionState.None) {
-                    cell.updateExplosion()
+                    if (cellUpdateExplosion(cell, elapsedTime)) {
+                        cell.scoreAnnouncer.begin(cell.scoreReward)
+                        addScore(cell.scoreReward)
+                    }
+
                     if (cell.explosionState == CellExplosionState.None) {
-                        addScore(10)
                         cell.filled = false
+                        cell.scoreReward = DEFAULT_CELL_CLEAR_REWARD
                     } else {
                         allDone = false
                     }
@@ -1177,7 +1258,7 @@ fun GameContext.render() {
             countdownText.render()
         }
 
-        GameState.Placing, GameState.AnimatingCurrentShape -> {
+        GameState.Placing, is GameState.AnimatingCurrentShape -> {
             assert(currentShape.shape < shapesMap.size)
 
             if (currentShape.shape != -1) {
