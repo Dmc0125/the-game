@@ -14,8 +14,8 @@ const val CELL_RADIUS_FRACTION = 0.25f
 const val PLAYGROUND_PADDING_FRACTION = 0.02f
 const val DRAG_SENSITIVITY = 1.75f
 const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
-const val EXPLOSION_CHARGE_ANIMATION_DURATION = 0.22f
-const val EXPLOSION_CELL_PULSE_COUNT = 4
+const val EXPLOSION_CHARGE_ANIMATION_DURATION = 0.4f
+const val EXPLOSION_CELL_PULSE_COUNT = 2
 const val EXPLOSION_CELL_SCALE_MAX = 1.35f
 const val EXPLOSION_CELL_SCALE_MIN = 0.9f
 const val EXPLOSION_PARTICLE_LIFESPAN = 0.6f
@@ -146,11 +146,34 @@ fun lerp(start: Float, end: Float, progress: Float): Float = start + (end - star
 fun lerp(start: Vec2, end: Vec2, progress: Float): Vec2 = start + (end - start) * progress
 fun lerp(start: Int, end: Int, progress: Float): Int = (start + (end - start) * progress).toInt()
 
+fun easeInSquared(progress: Float): Float = progress * progress
+fun easeOutSquared(progress: Float): Float = 1f - easeInSquared(1f - progress)
+
+fun easeInCubic(progress: Float): Float = progress * progress * progress
+fun easeOutCubic(progress: Float): Float = 1f - easeInCubic(1f - progress)
+
+enum class AnimationEasing {
+    Linear,
+    EaseInSquared,
+    EaseOutSquared,
+    EaseInCubic,
+    EaseOutCubic,
+}
+
+val easeFunctions = mapOf(
+    AnimationEasing.Linear to { progress: Float -> progress },
+    AnimationEasing.EaseInSquared to ::easeInSquared,
+    AnimationEasing.EaseOutSquared to ::easeOutSquared,
+    AnimationEasing.EaseInCubic to ::easeInCubic,
+    AnimationEasing.EaseOutCubic to ::easeOutCubic,
+)
+
 data class Animation<T>(
     var current: T,
-    val duration: Float,
+    var duration: Float,
     var delay: Float = 0f,
     val lerp: (start: T, end: T, progress: Float) -> T,
+    var easing: AnimationEasing = AnimationEasing.Linear,
 ) {
     var animating = false
     var animationStartTime = 0f
@@ -185,7 +208,8 @@ data class Animation<T>(
             return
         }
 
-        current = lerp(animationStartValue, animationEndValue, progress)
+        val t = easeFunctions[easing]?.invoke(progress) ?: progress
+        current = lerp(animationStartValue, animationEndValue, t)
     }
 }
 
@@ -254,8 +278,14 @@ class CurrentShape(
     var posCoordsPrev = DEFAULT_COORDS.toVec2()
     var posCoords = DEFAULT_COORDS.toVec2()
 
-    val projectionAnim = Animation(DEFAULT_COORDS.toVec2(), SHAPE_MOVEMENT_ANIMATION_DURATION, lerp = ::lerp)
-    val rotationAnim = Animation(0f, SHAPE_MOVEMENT_ANIMATION_DURATION, lerp = ::lerp)
+    val projectionAnim = Animation(
+        DEFAULT_COORDS.toVec2(),
+        SHAPE_MOVEMENT_ANIMATION_DURATION,
+        lerp = ::lerp,
+        easing = AnimationEasing.EaseOutSquared
+    )
+    val rotationAnim =
+        Animation(0f, SHAPE_MOVEMENT_ANIMATION_DURATION, lerp = ::lerp, easing = AnimationEasing.EaseOutSquared)
 
     fun cells(): Iterable<Coords> {
         return Iterable {
@@ -530,68 +560,10 @@ fun ScoreAnnouncer.render() {
     )
 }
 
-data class Particle(val ctx: GameContext) {
-    // config
-    val startPosition = Vec2(0f, 0f)
-    var distance = 0f
-
-    // computed
-    var alpha = 255
-    var currentPosition = Vec2(0f, 0f)
-    val endPosition = Vec2(0f, 0f)
-    var spawnTime = 0f
-}
-
-fun Particle.init(coords: Coords) {
-    // center of the cell
-
-    val (x, y) = coordsToPos(ctx, coords)
-
-    startPosition.x = x + ctx.cellSize / 2f
-    startPosition.y = y + ctx.cellSize / 2f
-
-    // TODO: make this bigger based on multi fill
-    val maxDistance = ctx.cellSize * 4
-    distance = (0.8f + Random.nextFloat() * 0.2f) * maxDistance
-}
-
-fun Particle.spawn() {
-    spawnTime = ctx.elapsedTime
-
-    alpha = 255
-    currentPosition = startPosition.copy()
-
-    val angle = Random.nextFloat() * (2f * PI.toFloat())
-    endPosition.x = startPosition.x + distance * kotlin.math.cos(angle)
-    endPosition.y = startPosition.y + distance * kotlin.math.sin(angle)
-}
-
-fun Particle.dead(): Boolean {
-    return ctx.elapsedTime - spawnTime > EXPLOSION_PARTICLE_LIFESPAN
-}
-
-fun Particle.update(): Boolean {
-    if (dead()) {
-        return true
-    }
-
-    val age = ctx.elapsedTime - spawnTime
-    val fraction = kotlin.math.min(1f, age / EXPLOSION_PARTICLE_LIFESPAN)
-
-    if (fraction > 0.5f) {
-        val alphaFraction = (fraction - 0.5f) / 0.5f
-        alpha = ((1 - alphaFraction) * 255).toInt()
-    }
-
-    val p = 1 - fraction
-    currentPosition = lerp(startPosition, endPosition, 1 - p * p)
-    return false
-}
-
-enum class CellAnimationState {
+enum class CellExplosionState {
     None,
-    Charging,
-    Exploding,
+    Growing,
+    Shrinking,
 }
 
 data class Cell(
@@ -601,126 +573,92 @@ data class Cell(
     var filled: Boolean = false,
 ) {
     var filledAt = 0f
+    var explosionState = CellExplosionState.None
 
-    var animationState = CellAnimationState.None
-    val chargeAlphaAnim = Animation(0, EXPLOSION_CHARGE_ANIMATION_DURATION, lerp = ::lerp)
+    fun lerpColor(start: Int, end: Int, progress: Float): Int {
+        val a = (start shr 24) and 0xFF
+        val r = (start shr 16) and 0xFF
+        val g = (start shr 8) and 0xFF
+        val b = start and 0xFF
 
-    val pulsePhaseDuration = EXPLOSION_CHARGE_ANIMATION_DURATION / EXPLOSION_CELL_PULSE_COUNT / 2
-    val pulseGrowTo = EXPLOSION_CELL_SCALE_MAX
-    val pulseShrinkTo = EXPLOSION_CELL_SCALE_MIN
-    val pulseGrowAnim = Animation(0f, pulsePhaseDuration, lerp = ::lerp)
-    val pulseShrinkAnim = Animation(0f, pulsePhaseDuration, lerp = ::lerp)
+        val targetA = (end shr 24) and 0xFF
+        val targetR = (end shr 16) and 0xFF
+        val targetG = (end shr 8) and 0xFF
+        val targetB = end and 0xFF
 
-    var particlesAnimating = false
-    val particles = Array(PARTICLE_COUNT_PER_CELL) { Particle(ctx) }
+        return Color.argb(
+            lerp(a, targetA, progress),
+            lerp(r, targetR, progress),
+            lerp(g, targetG, progress),
+            lerp(b, targetB, progress),
+        )
+    }
+
+    val growingDuration = 0.2f
+    val shrinkingDuration = 0.3f
+
+    val chargeColorAnim = Animation(0, growingDuration, lerp = ::lerpColor)
+    val pulseAnim = Animation(0f, shrinkingDuration, lerp = ::lerp)
+    val rotationAnim = Animation(0f, shrinkingDuration, lerp = ::lerp, easing = AnimationEasing.EaseOutSquared)
 
     val scoreAnnouncer = ScoreAnnouncer(ctx)
 }
 
-fun Cell.beginExplosion(elapsedTime: Float, delay: Float) {
-    animationState = CellAnimationState.Charging
+fun Cell.beginExplosion(delay: Float) {
+    explosionState = CellExplosionState.Growing
 
-    chargeAlphaAnim.delay = delay
-    chargeAlphaAnim.current = 0
-    chargeAlphaAnim.begin(elapsedTime, 255)
+    chargeColorAnim.delay = delay
+    chargeColorAnim.current = color
+    chargeColorAnim.duration = growingDuration
+    chargeColorAnim.easing = AnimationEasing.EaseInSquared
+    chargeColorAnim.begin(ctx.elapsedTime, Color.WHITE)
 
-    pulseGrowAnim.delay = delay
-    pulseGrowAnim.current = 1f
-    pulseGrowAnim.begin(elapsedTime, pulseGrowTo)
-
-    pulseShrinkAnim.delay = delay + pulsePhaseDuration
-    pulseShrinkAnim.current = pulseGrowTo
-    pulseShrinkAnim.begin(elapsedTime, pulseShrinkTo)
+    pulseAnim.current = 1f
+    pulseAnim.delay = delay
+    pulseAnim.animating = false
+    pulseAnim.easing = AnimationEasing.EaseInSquared
+    pulseAnim.duration = growingDuration
+    pulseAnim.begin(ctx.elapsedTime, 1.2f)
 }
 
-fun Cell.currentScale(): Float = if (pulseGrowAnim.animating) {
-    pulseGrowAnim.current
-} else {
-    pulseShrinkAnim.current
-}
+fun Cell.updateExplosion() {
+    assert(explosionState != CellExplosionState.None) { "Explosion animation is not active" }
 
-fun Cell.updateExplosion(elapsedTime: Float) {
-    assert(animationState != CellAnimationState.None) { "Explosion animation is not active" }
+    chargeColorAnim.update(ctx.elapsedTime)
+    pulseAnim.update(ctx.elapsedTime)
 
-    when (animationState) {
-        CellAnimationState.Charging -> {
-            chargeAlphaAnim.update(elapsedTime)
+    when (explosionState) {
+        CellExplosionState.Growing -> {
+            if (!pulseAnim.animating && !chargeColorAnim.animating) {
+                explosionState = CellExplosionState.Shrinking
 
-            if (chargeAlphaAnim.animating) {
-                pulseGrowAnim.update(elapsedTime)
-                pulseShrinkAnim.update(elapsedTime)
+                chargeColorAnim.delay = 0f
+                chargeColorAnim.duration = shrinkingDuration
+                chargeColorAnim.easing = AnimationEasing.EaseOutSquared
+                chargeColorAnim.begin(ctx.elapsedTime, Color.addAlpha(0, chargeColorAnim.current))
 
-                if (!pulseShrinkAnim.animating) {
-                    pulseGrowAnim.delay = 0f
-                    pulseGrowAnim.current = pulseShrinkAnim.current
-                    pulseGrowAnim.begin(elapsedTime, pulseGrowTo)
-                    pulseShrinkAnim.delay = pulsePhaseDuration
-                    pulseShrinkAnim.current = pulseGrowTo
-                    pulseShrinkAnim.begin(elapsedTime, pulseShrinkTo)
-                }
-            } else {
-                animationState = CellAnimationState.Exploding
+                pulseAnim.delay = 0f
+                pulseAnim.duration = shrinkingDuration
+                pulseAnim.easing = AnimationEasing.EaseOutSquared
+                pulseAnim.begin(ctx.elapsedTime, 0.5f)
+
+                rotationAnim.animating = false
+                rotationAnim.current = 0f
+                rotationAnim.begin(ctx.elapsedTime, 45f)
+
                 scoreAnnouncer.begin(10)
             }
         }
 
-        CellAnimationState.Exploding -> {
-            if (!particlesAnimating) {
-                particlesAnimating = true
-                for (particle in particles) {
-                    particle.spawn()
-                }
-            } else {
-                var allDone = true
-                for (particle in particles) {
-                    val done = particle.update()
-                    if (!done) {
-                        allDone = false
-                    }
-                }
+        CellExplosionState.Shrinking -> {
+            rotationAnim.update(ctx.elapsedTime)
 
-                if (allDone) {
-                    animationState = CellAnimationState.None
-                    particlesAnimating = false
-                }
+            if (!pulseAnim.animating && !chargeColorAnim.animating && !rotationAnim.animating) {
+                explosionState = CellExplosionState.None
             }
         }
 
-        CellAnimationState.None -> {}
-    }
-}
-
-class ScreenShake(val ctx: GameContext) {
-    val delay = EXPLOSION_CHARGE_ANIMATION_DURATION
-    var startTime = 0f
-    var duration = 0f
-    var magnitude = 0f
-    val offset = Vec2(0f, 0f)
-    var animating = false
-
-    fun begin(magnitude: Float, duration: Float) {
-        this.magnitude = magnitude
-        this.duration = duration
-        startTime = ctx.elapsedTime
-        animating = true
-    }
-
-    fun update() {
-        val ageWithDelay = ctx.elapsedTime - startTime
-        val age = ageWithDelay - delay
-
-        if (age > duration) {
-            animating = false
-            return
-        }
-
-        if (ageWithDelay < delay) {
-            return
-        }
-
-        val strength = magnitude * (1f - age / duration)
-        offset.x = kotlin.math.sin(age * 73f) * strength
-        offset.y = kotlin.math.sin(age * 109f + 1.2f) * strength
+        CellExplosionState.None -> Unit
     }
 }
 
@@ -765,7 +703,6 @@ class GameContext(
     val shapesBag = ShapesBag()
     var currentShape = CurrentShape(this)
     val countdownText = CountdownText(this)
-    val screenShake = ScreenShake(this)
     var shapesPlaced = 0
     var score = 0
 }
@@ -861,7 +798,7 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
         run {
             val idx = coordsToIdx(fixedCoord, start)
             val cell = ctx.cells[idx]
-            cell.beginExplosion(elapsedTime, 0f)
+            cell.beginExplosion(0f)
         }
 
         // delays
@@ -879,12 +816,16 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
             if (preCoord >= 0) {
                 val idx = coordsToIdx(fixedCoord, preCoord)
                 val left = ctx.cells[idx]
-                left.beginExplosion(elapsedTime, delay)
+                if (left.explosionState == CellExplosionState.None) {
+                    left.beginExplosion(delay)
+                }
             }
 
             if (postCoord < CELLS_COUNT) {
                 val right = ctx.cells[coordsToIdx(fixedCoord, postCoord)]
-                right.beginExplosion(elapsedTime, delay)
+                if (right.explosionState == CellExplosionState.None) {
+                    right.beginExplosion(delay)
+                }
             }
 
             offset += 1
@@ -931,9 +872,6 @@ fun placeShapeAndBeginExplosion(ctx: GameContext) {
     }
 
     if (animating) {
-        val screenShakeDuration = maxDelay + EXPLOSION_PARTICLE_LIFESPAN
-        ctx.screenShake.begin(10f, screenShakeDuration)
-
         ctx.state = GameState.AnimatingCellsExplosion
     }
 }
@@ -979,10 +917,6 @@ fun GameContext.update(touch: Touch) {
             val col = cell.idx % CELLS_COUNT
             val row = cell.idx / CELLS_COUNT
             val coords = Coords(col, row)
-
-            for (particle in cell.particles) {
-                particle.init(coords)
-            }
 
             cell.scoreAnnouncer.init(coords)
         }
@@ -1144,32 +1078,14 @@ fun GameContext.update(touch: Touch) {
                     continue
                 }
 
-                when (cell.animationState) {
-                    CellAnimationState.Charging -> {
-                        cell.updateExplosion(elapsedTime)
-                        if (cell.animationState == CellAnimationState.Exploding) {
-                            addScore(10)
-                        }
+                if (cell.explosionState != CellExplosionState.None) {
+                    cell.updateExplosion()
+                    if (cell.explosionState == CellExplosionState.None) {
+                        addScore(10)
+                        cell.filled = false
+                    } else {
                         allDone = false
                     }
-
-                    CellAnimationState.Exploding -> {
-                        cell.updateExplosion(elapsedTime)
-                        if (cell.animationState == CellAnimationState.None) {
-                            cell.filled = false
-                        } else {
-                            allDone = false
-                        }
-                    }
-
-                    else -> Unit
-                }
-            }
-
-            if (screenShake.animating) {
-                screenShake.update()
-                if (allDone) {
-                    allDone = !screenShake.animating
                 }
             }
 
@@ -1207,12 +1123,6 @@ fun renderCell(ctx: GameContext, coords: Vec2, color: Int, stroke: Boolean = fal
 }
 
 fun GameContext.render() {
-    if (screenShake.animating) {
-        renderer.save()
-        val (offsetx, offsety) = screenShake.offset
-        renderer.translate(offsetx, offsety)
-    }
-
     // playground
     renderer.drawRoundRect(pgRect, RADIUS * pixelDensity, Color.BLACK)
 
@@ -1220,7 +1130,7 @@ fun GameContext.render() {
         for (idx in 0..<CELLS_COUNT * CELLS_COUNT) {
             val cell = cells[idx]
 
-            if (cell.filled && !cell.particlesAnimating) {
+            if (cell.filled && cell.explosionState == CellExplosionState.None) {
                 val coords = cellIdxToCoords(idx)
                 renderCell(this, coords, cell.color)
             }
@@ -1249,7 +1159,7 @@ fun GameContext.render() {
             val scratchCoords = Coords(0, 0)
             for (idx in 0..<CELLS_COUNT * CELLS_COUNT) {
                 val cell = cells[idx]
-                if (cell.chargeAlphaAnim.animating) {
+                if (cell.explosionState != CellExplosionState.None) {
                     scratchCoords.col = idx % CELLS_COUNT
                     scratchCoords.row = idx / CELLS_COUNT
 
@@ -1257,37 +1167,35 @@ fun GameContext.render() {
                     var cellCenter = coordsToPos(this, scratchCoords.toVec2())
                     cellCenter += cellSize / 2
 
+
+                    if (cell.rotationAnim.animating) {
+                        val rotation = cell.rotationAnim.current
+                        renderer.save()
+                        renderer.rotate(rotation, cellCenter.x, cellCenter.y)
+                    }
+
                     // scaled
-                    val scaledCellSize = cellSize * cell.currentScale()
-                    val cellx = cellCenter.x - scaledCellSize / 2
-                    val celly = cellCenter.y - scaledCellSize / 2
+                    if (cell.pulseAnim.current > 0f) {
+                        val scaledCellSize = cellSize * cell.pulseAnim.current
+                        val cellx = cellCenter.x - scaledCellSize / 2
+                        val celly = cellCenter.y - scaledCellSize / 2
 
-                    val p = cellPadding
-                    val r = scaledCellSize * CELL_RADIUS_FRACTION
-                    renderer.drawRoundRect(
-                        cellx + p, celly + p, scaledCellSize - p, scaledCellSize - p,
-                        r,
-                        Color.addAlpha(cell.chargeAlphaAnim.current, Color.WHITE),
-                    )
-                }
+                        val p = cellPadding
+                        val r = scaledCellSize * CELL_RADIUS_FRACTION
+                        renderer.drawRoundRect(
+                            cellx + p, celly + p, scaledCellSize - p, scaledCellSize - p,
+                            r,
+                            cell.chargeColorAnim.current,
+                        )
+                    }
 
-                // particles
-                if (cell.particlesAnimating) {
-                    for (particle in cell.particles) {
-                        if (!particle.dead()) {
-                            val (cx, cy) = particle.currentPosition
-                            val clr = Color.addAlpha(particle.alpha, Color.WHITE)
-                            renderer.drawRect(cx, cy, 3f * pixelDensity, 3f * pixelDensity, clr)
-                        }
+                    if (cell.rotationAnim.animating) {
+                        renderer.restore()
                     }
                 }
             }
         }
 
         GameState.GameOver -> Unit
-    }
-
-    if (screenShake.animating) {
-        renderer.restore()
     }
 }

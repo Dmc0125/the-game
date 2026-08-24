@@ -222,6 +222,7 @@ class GameView(
             val cell = game.cells[col + CELLS_COUNT]
             cell.filled = true
             cell.color = colors[0]
+            cell.filledAt = game.elapsedTime
         }
     }
 
