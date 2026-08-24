@@ -3,8 +3,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val logDebug = providers.gradleProperty("logDebug").map { it.toBoolean() }.orElse(false)
-val gameOver = providers.gradleProperty("gameOver").map { it.toBoolean() }.orElse(false)
+val logDebug = providers.gradleProperty("log-debug").map { it.toBoolean() }.orElse(false)
+val gameOver = providers.gradleProperty("game-over").map { it.toBoolean() }.orElse(false)
 
 android {
     namespace = "shapes"

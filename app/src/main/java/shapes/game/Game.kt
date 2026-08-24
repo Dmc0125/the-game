@@ -1,5 +1,6 @@
 package shapes.game
 
+import android.os.Trace
 import kotlin.math.PI
 import kotlin.math.pow
 import kotlin.random.Random
@@ -330,40 +331,44 @@ fun CurrentShape.checkOverlap() {
 }
 
 fun CurrentShape.availablePlacementCoords(rot: Int = -1): Coords? {
-    val offsets = arrayOf(
-        Coords(0, -1), // up
-        Coords(1, -1), // up right
-        Coords(1, 0), // right
-        Coords(1, 1), // down right
-        Coords(0, 1), // down
-        Coords(-1, 1), // down left
-        Coords(-1, 0), // left
-        Coords(-1, -1), // up left
-    )
-
-    val queue = ArrayDeque(listOf(projectionCoords))
-    val visited = mutableSetOf<Coords>()
     val shapeIdx = shapeRotationIndex(shape, if (rot == -1) this.rotation else rot)
+    val visited = BooleanArray(CELLS_COUNT * CELLS_COUNT) // cell[cellIndex] = visited
+    val queue = IntArray(CELLS_COUNT * CELLS_COUNT) // cell indeces
+    var queueStart = 0
+    var queueEnd = 0
 
-    search@ while (queue.size > 0) {
-        val tryCoords = queue.removeFirst()
-        if (visited.contains(tryCoords)) {
-            continue
+    fun enqueue(col: Int, row: Int) {
+        if (col !in 0..<CELLS_COUNT || row !in 0..<CELLS_COUNT) {
+            return
         }
 
-        visited.add(tryCoords)
+        val idx = coordsToIdx(col, row)
+        if (visited[idx]) {
+            return
+        }
 
-        // process
+        visited[idx] = true
+        queue[queueEnd] = idx
+        queueEnd += 1
+    }
+
+    enqueue(projectionCoords.col, projectionCoords.row)
+
+    var resultCoords: Coords? = null
+    search@ while (queueStart < queueEnd) {
+        val tryIdx = queue[queueStart]
+        queueStart += 1
+
+        val tryCoords = Coords(
+            tryIdx % CELLS_COUNT,
+            tryIdx / CELLS_COUNT,
+        )
 
         var valid = true
-
         for (cellOffset in shapesMap[shapeIdx]) {
             val tryCellCoords = tryCoords + cellOffset
 
-            if (
-                tryCellCoords.col !in 0..<CELLS_COUNT ||
-                tryCellCoords.row !in 0..<CELLS_COUNT
-            ) {
+            if (tryCellCoords.col !in 0..<CELLS_COUNT || tryCellCoords.row !in 0..<CELLS_COUNT) {
                 valid = false
                 break
             }
@@ -381,24 +386,21 @@ fun CurrentShape.availablePlacementCoords(rot: Int = -1): Coords? {
         }
 
         if (valid) {
-            return tryCoords
+            resultCoords = tryCoords
+            break
         }
 
-        // next
-
-        for (offset in offsets) {
-            val nextCoords = tryCoords + offset
-            if (
-                nextCoords !in visited &&
-                nextCoords.col in 0..<CELLS_COUNT &&
-                nextCoords.row in 0..<CELLS_COUNT
-            ) {
-                queue.add(nextCoords)
-            }
-        }
+        enqueue(tryCoords.col, tryCoords.row - 1) // up
+        enqueue(tryCoords.col + 1, tryCoords.row - 1) // up right
+        enqueue(tryCoords.col + 1, tryCoords.row) // right
+        enqueue(tryCoords.col + 1, tryCoords.row + 1) // down right
+        enqueue(tryCoords.col, tryCoords.row + 1) // down
+        enqueue(tryCoords.col - 1, tryCoords.row + 1) // down left
+        enqueue(tryCoords.col - 1, tryCoords.row) //  left
+        enqueue(tryCoords.col - 1, tryCoords.row - 1) // up left
     }
 
-    return null
+    return resultCoords
 }
 
 fun CurrentShape.render() {
@@ -710,7 +712,7 @@ class GameContext(
     var currentShape = CurrentShape(this)
     val countdownText = CountdownText(this)
     var shapesPlaced = 0
-    var roundDuration = 10f
+    var roundDuration = 5f
     var score = 0
 }
 
@@ -908,8 +910,8 @@ fun checkOverTheEdge(newPosCoords: Vec2, shapeIdx: Int): Vec2 {
 }
 
 fun currentRoundDuration(shapesPlaced: Int): Float {
-    val startingSeconds = 10f
-    val minimumSeconds = 5f
+    val startingSeconds = 5f
+    val minimumSeconds = 3f
     val warmupShapes = 10
     val halfLifeShapes = 50f
 
@@ -967,6 +969,7 @@ fun GameContext.update(touch: Touch) {
         GameState.Placing -> {
             // spawn shape
             if (currentShape.shape == -1) {
+                Trace.beginSection("spawnShape")
                 val shapeIdx = shapesBag.next()
                 currentShape = CurrentShape(this, shapeIdx)
 
@@ -978,6 +981,7 @@ fun GameContext.update(touch: Touch) {
                 if (availableCoords == null) {
                     onGameOver?.invoke()
                     state = GameState.GameOver
+                    Trace.endSection()
                     return
                 }
 
@@ -989,18 +993,23 @@ fun GameContext.update(touch: Touch) {
 
                 pendingRotation = false
                 pendingPlacement = false
+                Trace.endSection()
             } else {
                 // check round timer
 
                 if (currentShape.createdAt + roundDuration < elapsedTime) {
                     // force place
+                    Trace.beginSection("forcePlace")
 
                     val availableCoords = currentShape.availablePlacementCoords()
                     if (availableCoords == null) {
                         onGameOver?.invoke()
                         state = GameState.GameOver
+                        Trace.endSection()
                         return
                     }
+
+                    Trace.endSection()
 
                     if (availableCoords != currentShape.projectionCoords) {
                         currentShape.projectionCoords = availableCoords

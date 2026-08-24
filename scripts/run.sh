@@ -24,9 +24,11 @@ adb -s "$DEVICE_SERIAL" logcat -c # clear logcat
 
 # build
 GRADLE_ARGS=()
+LOG_GREP=""
 
 for arg in "$@"; do
     case "$arg" in
+        --grep=*) LOG_GREP="${arg#--grep=}" ;;
         --*=*) GRADLE_ARGS+=("-P${arg#--}") ;;
         --*) GRADLE_ARGS+=("-P${arg#--}=true") ;;
         *) GRADLE_ARGS+=("$arg") ;;
@@ -63,4 +65,9 @@ if [[ -z "$PID" ]]; then
   exit 1
 fi
 
-adb -s "$DEVICE_SERIAL" logcat -v color --pid="$PID"
+if [[ -n "$LOG_GREP" ]]; then
+    echo "Filtering logcat output with: $LOG_GREP"
+    adb -s "$DEVICE_SERIAL" logcat -v color --pid="$PID" | grep -E "$LOG_GREP"
+else
+    adb -s "$DEVICE_SERIAL" logcat -v color --pid="$PID"
+fi

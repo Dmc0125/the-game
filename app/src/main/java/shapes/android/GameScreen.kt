@@ -2,25 +2,13 @@ package shapes.android
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableFloatState
-import androidx.compose.runtime.MutableIntState
-import androidx.compose.runtime.Stable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -34,11 +22,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import kotlinx.coroutines.delay
 import shapes.game.FONT_DMMONO
 import shapes.game.FONT_MANROPE
 import shapes.game.FontWeight
-import shapes.game.reset
 
 private fun Modifier.forwardUncomsumedTouches(onTouch: (PointerEvent) -> Unit): Modifier {
     return pointerInput(Unit) {
@@ -299,13 +285,13 @@ fun TopBar(
 }
 
 sealed interface TimerCommand {
-    data class Start(val i: Int, val duration: Float) : TimerCommand
+    data class Start(val commandCount: Int, val duration: Float) : TimerCommand
     data object Stop : TimerCommand
 }
 
 @Stable
 class TimerController {
-    var commandCount by mutableStateOf(0)
+    var commandCount = 0
     var command by mutableStateOf<TimerCommand?>(null)
 
     fun stop() {
@@ -338,7 +324,7 @@ fun Timer(controller: TimerController) {
                     progress.animateTo(
                         0f,
                         animationSpec = tween(
-                            durationMillis = command.duration.toInt() * 1000,
+                            durationMillis = (command.duration * 1000f).toInt(),
                             easing = LinearEasing,
                         )
                     )

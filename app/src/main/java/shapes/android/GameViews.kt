@@ -171,6 +171,21 @@ fun Metrics.begin() {
     totalRenderNanos = 0L
 }
 
+fun Metrics.record(
+    dtNanos: Long,
+    updateNanos: Long,
+    renderNanos: Long,
+) {
+    totalDtNanos += dtNanos
+    totalUpdateNanos += updateNanos
+    totalRenderNanos += renderNanos
+    measuredFrames++
+
+    if (updateNanos > 1e6f) {
+        Log.i("Metrics", "slow update=$updateNanos")
+    }
+}
+
 fun Metrics.log() {
     val now = System.nanoTime()
     val elapsed = (now - startTimeNanos) / 1e9f
