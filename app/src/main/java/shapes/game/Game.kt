@@ -1,6 +1,7 @@
 package shapes.game
 
 import kotlin.math.PI
+import kotlin.math.pow
 import kotlin.random.Random
 
 const val FONT_MANROPE = "manrope"
@@ -670,13 +671,18 @@ enum class GameState {
     GameOver,
 }
 
+typealias onScoreChange = (Int) -> Unit
+typealias onPlaceShape = () -> Unit
+typealias onRoundStart = (shapeIdx: Int, roundDuration: Float) -> Unit
+typealias onGameOver = () -> Unit
+
 class GameContext(
     val pixelDensity: Float,
     val scaledDensity: Float,
-    val onScoreChange: ((Int) -> Unit)? = null,
-    val onPlaceShape: (() -> Unit)? = null,
-    val onNextShape: ((Int) -> Unit)? = null,
-    val onGameOver: (() -> Unit)? = null,
+    val onScoreChange: onScoreChange? = null,
+    val onPlaceShape: onPlaceShape? = null,
+    val onRoundStart: onRoundStart? = null,
+    val onGameOver: onGameOver? = null,
 ) {
     var dt = 0f
     var elapsedTime = 0f
@@ -704,6 +710,7 @@ class GameContext(
     var currentShape = CurrentShape(this)
     val countdownText = CountdownText(this)
     var shapesPlaced = 0
+    var roundDuration = 10f
     var score = 0
 }
 
@@ -900,6 +907,19 @@ fun checkOverTheEdge(newPosCoords: Vec2, shapeIdx: Int): Vec2 {
     return offsets
 }
 
+fun currentRoundDuration(shapesPlaced: Int): Float {
+    val startingSeconds = 10f
+    val minimumSeconds = 5f
+    val warmupShapes = 10
+    val halfLifeShapes = 50f
+
+    val shapesIntoDifficulty = kotlin.math.max(0, shapesPlaced - warmupShapes)
+
+    return minimumSeconds +
+            (startingSeconds - minimumSeconds) *
+            0.5f.pow(shapesIntoDifficulty / halfLifeShapes)
+}
+
 fun GameContext.update(touch: Touch) {
     // size change
 
@@ -962,15 +982,17 @@ fun GameContext.update(touch: Touch) {
                 }
 
                 val nextShapeIdx = shapesBag.peek()
-                onNextShape?.invoke(nextShapeIdx)
                 currentShape.checkOverlap()
+
+                roundDuration = currentRoundDuration(shapesPlaced)
+                onRoundStart?.invoke(nextShapeIdx, roundDuration)
 
                 pendingRotation = false
                 pendingPlacement = false
             } else {
                 // check round timer
 
-                if (currentShape.createdAt + 10f < elapsedTime) {
+                if (currentShape.createdAt + roundDuration < elapsedTime) {
                     // force place
 
                     val availableCoords = currentShape.availablePlacementCoords()

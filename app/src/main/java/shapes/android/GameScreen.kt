@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.MutableIntState
@@ -62,8 +63,27 @@ private fun Modifier.forwardUncomsumedTouches(onTouch: (PointerEvent) -> Unit): 
 }
 
 @Composable
-fun GameScreen() {
+fun GameScreen(
+    gameOver: Boolean,
+    onGameOver: () -> Unit,
+    onPlayAgain: () -> Unit,
+) {
     val gameView = remember { mutableStateOf<GameView?>(null) }
+
+    if (shapes.BuildConfig.DEBUG) {
+        DisposableEffect(Unit) {
+            val handler: (DebugAction) -> Unit = { action ->
+                when (action) {
+                    DebugAction.ExplodeCell -> gameView.value?.debugExplodeCell()
+                    DebugAction.FillRow -> gameView.value?.debugFillRow()
+                    DebugAction.SpawnSingleCellShape -> gameView.value?.debugSpawnShape()
+                    DebugAction.PlaceShape -> gameView.value?.handleShapePlace()
+                }
+            }
+            DebugActions.register(handler)
+            onDispose { DebugActions.unregister(handler) }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -89,8 +109,6 @@ fun GameScreen() {
                 .neobrutalistShadow()
                 .graphicsLayer { clip = false },
         ) {
-            val gameOver = remember { mutableStateOf(shapes.BuildConfig.GAME_OVER ?: false) }
-
             AndroidView(
                 modifier = Modifier.fillMaxSize().graphicsLayer { clip = false },
                 factory = { context ->
@@ -98,27 +116,23 @@ fun GameScreen() {
                         context,
                         onScoreChange = { score.value = it },
                         onPlaceShape = { timerController.stop() },
-                        onNextShape = {
-                            nextShapeView.value?.onNextShape(it)
-                            timerController.start(10f)
+                        onRoundStart = { shapeIdx, roundDuration ->
+                            nextShapeView.value?.onNextShape(shapeIdx)
+                            timerController.start(roundDuration)
                         },
                         onGameOver = {
-                            gameOver.value = true
+                            onGameOver()
                             timerController.stop()
                         },
                     ).also {
                         gameView.value = it
                         it.resume()
-
-                        if (shapes.BuildConfig.GAME_OVER) {
-                            it.game.state = shapes.game.GameState.GameOver
-                        }
                     }
                 },
                 onRelease = { gameView -> gameView.pause() },
             )
 
-            if (gameOver.value) {
+            if (gameOver) {
                 var previousHighScore = Storage.highScore()
                 if (score.value > previousHighScore) {
                     Storage.saveHighScore(score.value)
@@ -170,8 +184,7 @@ fun GameScreen() {
                     Button(
                         text = "Play again",
                         onClick = {
-                            gameOver.value = false
-                            gameView.value?.game?.reset()
+                            onPlayAgain()
                         },
                     )
                 }
@@ -182,26 +195,6 @@ fun GameScreen() {
             onRotate = { gameView.value?.handleShapeRotate() },
             onPlace = { gameView.value?.handleShapePlace() },
         )
-
-        // debug controls
-
-        if (shapes.BuildConfig.DEBUG) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(20.dp),
-            ) {
-                Button(
-                    modifier = Modifier.weight(1f),
-                    text = "1x1",
-                    onClick = { gameView.value?.debugSpawnShape() },
-                )
-                Button(
-                    modifier = Modifier.weight(1f),
-                    text = "Fill row",
-                    onClick = { gameView.value?.debugFillRow() },
-                )
-            }
-        }
     }
 }
 

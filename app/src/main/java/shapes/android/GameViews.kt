@@ -192,10 +192,10 @@ fun Metrics.log() {
 
 class GameView(
     context: Context,
-    onScoreChange: (Int) -> Unit,
-    onPlaceShape: () -> Unit,
-    onNextShape: (Int) -> Unit,
-    onGameOver: () -> Unit,
+    onScoreChange: onScoreChange? = null,
+    onPlaceShape: onPlaceShape? = null,
+    onRoundStart: onRoundStart? = null,
+    onGameOver: onGameOver? = null,
 ) : View(context) {
     var running = false
     var lastFrameTime: Long = 0
@@ -204,7 +204,7 @@ class GameView(
         context.resources.displayMetrics.scaledDensity,
         onScoreChange,
         onPlaceShape,
-        onNextShape,
+        onRoundStart,
         onGameOver,
     )
     val touch = Touch()
@@ -217,17 +217,36 @@ class GameView(
 
     // debug
 
+    fun debugExplodeCell() {
+        val center = CELLS_COUNT / 2
+        val cell = game.cells[center * CELLS_COUNT + center]
+
+        cell.filled = true
+        cell.color = colors[0]
+        cell.filledAt = game.elapsedTime
+        cell.beginExplosion(0f)
+
+        game.state = GameState.AnimatingCellsExplosion
+    }
+
     fun debugFillRow() {
-        for (col in 0..<CELLS_COUNT - 1) {
-            val cell = game.cells[col + CELLS_COUNT]
+        val row = CELLS_COUNT / 2
+        val center = CELLS_COUNT / 2
+
+        for (col in 0..<CELLS_COUNT) {
+            val cell = game.cells[row * CELLS_COUNT + col]
             cell.filled = true
             cell.color = colors[0]
             cell.filledAt = game.elapsedTime
+            cell.beginExplosion(kotlin.math.abs(col - center) * EXPLOSION_DELAY)
         }
+
+        game.state = GameState.AnimatingCellsExplosion
     }
 
     fun debugSpawnShape() {
         game.currentShape = CurrentShape(game, 0)
+        game.state = GameState.Placing
     }
 
     //
