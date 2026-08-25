@@ -89,3 +89,23 @@ fun logd(message: String) {
         Log.d("ShapesGame", message)
     }
 }
+
+typealias Block = () -> Unit
+
+fun <T> withDefer(block: ((Block) -> Unit) -> T): T {
+    val defers = Array<() -> Unit>(10) { {} }
+    var defersCount = 0
+
+    fun defer(deferred: Block) {
+        defers[defersCount] = deferred
+        defersCount++
+    }
+
+    val result = block(::defer)
+
+    for (i in 0 until defersCount) {
+        defers[i]()
+    }
+
+    return result
+}

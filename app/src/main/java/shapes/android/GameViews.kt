@@ -242,12 +242,12 @@ class GameView(
 
     fun debugExplodeCell() {
         val center = CELLS_COUNT / 2
-        val cell = game.cells[center * CELLS_COUNT + center]
+        val cell = game.board.cells[center * CELLS_COUNT + center]
 
         cell.filled = true
         cell.color = colors[0]
         cell.filledAt = game.elapsedTime
-        cell.beginExplosion(0f)
+        cellBeginExplosion(cell, 0f, game.elapsedTime)
 
         game.state = GameState.AnimatingCellsExplosion
     }
@@ -257,13 +257,13 @@ class GameView(
         val center = CELLS_COUNT / 2
 
         for (col in 0..<CELLS_COUNT) {
-            val cell = game.cells[row * CELLS_COUNT + col]
+            val cell = game.board.cells[row * CELLS_COUNT + col]
             cell.filled = true
             cell.color = colors[0]
             cell.filledAt = game.elapsedTime
         }
 
-        clearFilled(game)
+        boardClearFilledCells(game.board, game.elapsedTime)
     }
 
     fun debugFillDouble() {
@@ -271,18 +271,18 @@ class GameView(
 
         for (row in arrayOf(centerRow, centerRow + 1)) {
             for (col in 0..<CELLS_COUNT) {
-                val cell = game.cells[row * CELLS_COUNT + col]
+                val cell = game.board.cells[row * CELLS_COUNT + col]
                 cell.filled = true
                 cell.color = colors[0]
                 cell.filledAt = game.elapsedTime
             }
         }
 
-        clearFilled(game)
+        boardClearFilledCells(game.board, game.elapsedTime)
     }
 
     fun debugSpawnShape() {
-        game.currentShape = CurrentShape(game, 0)
+        game.currentShape = CurrentShape(0)
         game.state = GameState.Placing
     }
 
@@ -355,17 +355,18 @@ class GameView(
         game.elapsedTime += deltaTime
 
         val updateStartNs = System.nanoTime()
-        game.update(touch)
+        gameUpdate(game, touch)
         val updateElapsedSeconds = System.nanoTime() - updateStartNs
 
         val renderStartNs = System.nanoTime()
-        game.render()
+        gameRender(game)
         val renderElapsedSeconds = System.nanoTime() - renderStartNs
 
-        metrics.measuredFrames += 1
-        metrics.totalDtNanos += delaTimeNanos
-        metrics.totalUpdateNanos += updateElapsedSeconds
-        metrics.totalRenderNanos += renderElapsedSeconds
+        metrics.record(
+            delaTimeNanos,
+            updateElapsedSeconds,
+            renderElapsedSeconds,
+        )
         metrics.log()
 
         postInvalidateOnAnimation()
