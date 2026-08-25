@@ -860,7 +860,7 @@ fun announcerAddScore(announcer: Announcer, score: Int, elapsedTime: Float) {
     announcer.scale.begin(elapsedTime, announcer.scale.current * 1.02f)
 
     // rotate
-    var newRotation = Random.nextInt(15, 25)
+    var newRotation = Random.nextInt(0, 40)
     if (announcer.rotation < 0) {
         newRotation *= -1
     }
@@ -873,8 +873,6 @@ fun announcerAddScore(announcer: Announcer, score: Int, elapsedTime: Float) {
 }
 
 fun announcerUpdate(announcer: Announcer, layout: Layout, renderer: Renderer, elapsedTime: Float) {
-    // layout
-
     val spacing = 5 * layout.pixelDensity
     val height = announcer.multiplierTextSize + announcer.scoreTextSize + spacing
     var quadrantCenterY = 0f
@@ -1455,7 +1453,7 @@ fun currentRoundDuration(shapesPlaced: Int): Float {
 }
 
 fun gameUpdate(game: GameContext, touch: Touch) {
-    // 1. layout
+    // layout
 
     if (game.changedWidth > -1f || game.changedHeight > -1) {
         layoutUpdate(game.layout, game.changedWidth, game.changedHeight)
@@ -1463,15 +1461,10 @@ fun gameUpdate(game: GameContext, touch: Touch) {
         game.changedHeight = -1f
     }
 
-    // 2. announcer
-
-    if (game.announcer.state != Announcer.AnimState.None) {
-        announcerUpdate(game.announcer, game.layout, game.renderer, game.elapsedTime)
-    }
 
     val gameState = game.state
 
-    // 3. countdown - independent
+    // countdown - independent
 
     if (gameState == GameState.Countdown) {
         if (shapes.BuildConfig.DEBUG) {
@@ -1483,7 +1476,7 @@ fun gameUpdate(game: GameContext, touch: Touch) {
         }
     }
 
-    // 4. current shape
+    // current shape
 
     if (gameState == GameState.Placing) {
         if (game.currentShape.shape == -1) {
@@ -1551,7 +1544,7 @@ fun gameUpdate(game: GameContext, touch: Touch) {
         }
     }
 
-    // 5. cells clearing animation
+    // cells clearing animation
 
     if (gameState == GameState.AnimatingCellsExplosion) {
         val (scoreReward, allDone) = boardUpdateClearingCells(game.board, game.elapsedTime)
@@ -1560,8 +1553,13 @@ fun gameUpdate(game: GameContext, touch: Touch) {
             announcerAddScore(game.announcer, scoreReward, game.elapsedTime)
             gameIncreaseScore(game, scoreReward)
         }
+    }
 
-        if (allDone) {
+    // announcer
+
+    if (game.announcer.state != Announcer.AnimState.None) {
+        announcerUpdate(game.announcer, game.layout, game.renderer, game.elapsedTime)
+        if (game.announcer.state == Announcer.AnimState.None) {
             game.state = GameState.Placing
         }
     }
