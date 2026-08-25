@@ -84,6 +84,7 @@ sealed interface DebugAction {
     data object SpawnSingleCellShape : DebugAction
     data object PlaceShape : DebugAction
     data object FillDouble : DebugAction
+    data object Announce : DebugAction
 }
 
 @Composable
@@ -228,11 +229,11 @@ fun DebugMenu(
                         text = "Fill double",
                         onClick = { onAction(DebugAction.FillDouble) },
                     )
-                    // DebugMenuButton(
-                    //     modifier = Modifier.weight(1f),
-                    //     text = "Place",
-                    //     onClick = { onAction(DebugAction.PlaceShape) },
-                    // )
+                    DebugMenuButton(
+                        modifier = Modifier.weight(1f),
+                        text = "Announce",
+                        onClick = { onAction(DebugAction.Announce) },
+                    )
                 }
             }
         }

@@ -6,7 +6,7 @@ import android.util.Log
 
 data class Vec2(var x: Float, var y: Float) {
     companion object {
-        val DEFAULT = Vec2(0f, 0f)
+        fun default() = Vec2(0f, 0f)
     }
 
     operator fun plus(other: Vec2): Vec2 {

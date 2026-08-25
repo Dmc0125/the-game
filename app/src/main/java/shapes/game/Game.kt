@@ -1,6 +1,7 @@
 package shapes.game
 
 import android.os.Trace
+import androidx.compose.animation.core.EaseOut
 import kotlin.math.E
 import kotlin.math.PI
 import kotlin.math.pow
@@ -545,13 +546,13 @@ fun ShapesBag.next(): Int {
 }
 
 class ScoreAnnouncer(val ctx: GameContext) {
-    var startPos = Vec2.DEFAULT
+    var startPos = Vec2.default()
     var endOffset = 0f
     val duration = 0.5f
 
     var animating = false
     var text = ""
-    var currentPos = Vec2.DEFAULT
+    var currentPos = Vec2.default()
     var startTime = 0f
     var alpha = 0
 }
@@ -718,6 +719,293 @@ fun cellUpdateExplosion(cell: Cell, elapsedTime: Float): Boolean {
     return false
 }
 
+sealed interface AnnouncerType {
+    data object Single : AnnouncerType
+    data object Double : AnnouncerType
+    data object Triple : AnnouncerType
+    data object Quadruple : AnnouncerType
+
+    fun string(): String = when (this) {
+        Single -> "Single"
+        Double -> "Double"
+        Triple -> "Triple"
+        Quadruple -> "Quadruple"
+    }
+}
+
+class Announcer(
+    val multiplierTextSize: Float,
+    val multiplierStrokeWidth: Float,
+    val scoreTextSize: Float,
+    val scoreTextStrokeWidth: Float,
+) {
+    sealed interface AnimState {
+        data object None : AnimState
+        data object Growing : AnimState
+        data object Shrinking : AnimState
+        data object Stable : AnimState
+        data object Disappearing : AnimState
+    }
+
+    companion object {
+        const val GROWING_DURATION = 0.1f
+        const val SHRINKING_DURATION = 0.12f
+        const val STABLE_DURATION = 0.5f
+        const val DISAPPEARING_DURATION = 0.2f
+    }
+
+    var col: Int = 0
+    var row: Int = 0
+    var containerCenter = Vec2.default()
+    var rotation = 0f
+
+    var multiplierText: String = ""
+    val multiplierTextPosition = Vec2.default()
+    var multiplierTextWidth = 0f
+
+    var scoreText: String = ""
+    val scoreTextPosition = Vec2.default()
+    var scoreTextWidth = 0f
+
+    var score: Int = 0
+    val scale = Animation(0f, 0f, lerp = ::lerp)
+    val alpha = Animation(0, 0f, lerp = ::lerp)
+    val rot = Animation(0f, 0f, lerp = ::lerp)
+    var state: AnimState = AnimState.None
+    var stableStartTime: Float = 0f
+}
+
+fun announcerAnnounce(
+    announcer: Announcer,
+    type: AnnouncerType,
+    col: Int,
+    row: Int,
+    elapsedTime: Float,
+) {
+    announcer.state = Announcer.AnimState.Growing
+
+    announcer.multiplierText = type.string()
+    announcer.score = 100
+
+    announcer.scale.current = 0.5f
+    announcer.scale.duration = Announcer.GROWING_DURATION
+    announcer.scale.easing = AnimationEasing.EaseOutSquared
+    announcer.scale.begin(elapsedTime, 1.3f)
+
+    announcer.rot.current = 0f
+    announcer.rot.easing = AnimationEasing.EaseOutSquared
+    announcer.rot.duration = Announcer.GROWING_DURATION
+
+    announcer.col = col
+    announcer.row = row
+}
+
+fun announcerAddScore(announcer: Announcer, score: Int, elapsedTime: Float) {
+    if (announcer.state != Announcer.AnimState.Stable) {
+        return
+    }
+
+    announcer.score += score
+    announcer.stableStartTime = elapsedTime
+
+    // grow by 2%
+    announcer.scale.duration = Announcer.GROWING_DURATION
+    announcer.scale.easing = AnimationEasing.EaseOutSquared
+    announcer.scale.begin(elapsedTime, announcer.scale.current * 1.02f)
+
+    // rotate
+    var newRotation = Random.nextInt(15, 25)
+    if (announcer.rotation < 0) {
+        newRotation *= -1
+    }
+
+    if (announcer.rot.current == 0f) {
+        announcer.rot.current = announcer.rotation
+    }
+
+    announcer.rot.begin(elapsedTime, newRotation.toFloat())
+}
+
+fun announcerUpdate(announcer: Announcer, ctx: GameContext) {
+    // layout
+
+    val spacing = 5 * ctx.pixelDensity
+    val height = announcer.multiplierTextSize + announcer.scoreTextSize + spacing
+    var quadrantCenterY = 0f
+    var quadrantCenterX = 0f
+
+    if (announcer.row < CELLS_COUNT / 2 - 2) quadrantCenterY = ctx.pgRect.height / 4f * 3f // lower half center
+    else quadrantCenterY = ctx.pgRect.height / 4f  // upper half center
+
+    if (announcer.col <= CELLS_COUNT / 2) {
+        quadrantCenterX = ctx.pgRect.width / 4f * 3f // right half center
+        announcer.rotation = 20f
+    } else {
+        quadrantCenterX = ctx.pgRect.width / 4f // left half center
+        announcer.rotation = -20f
+    }
+
+    val containerBottomY = quadrantCenterY + height / 2f
+    val containerTopY = containerBottomY - height - spacing
+
+    announcer.multiplierTextWidth =
+        ctx.renderer.measureText(
+            announcer.multiplierText,
+            announcer.multiplierTextSize,
+            FontWeight.Bold,
+            FONT_MANROPE
+        )
+    announcer.multiplierTextPosition.x = quadrantCenterX - announcer.multiplierTextWidth / 2f
+    announcer.multiplierTextPosition.y = containerTopY + announcer.multiplierTextSize
+
+    announcer.scoreText = "%d".format(announcer.score)
+    announcer.scoreTextWidth =
+        ctx.renderer.measureText(announcer.scoreText, announcer.scoreTextSize, FontWeight.Bold, FONT_MANROPE)
+    announcer.scoreTextPosition.x = quadrantCenterX - announcer.scoreTextWidth / 2f
+    announcer.scoreTextPosition.y = containerBottomY
+
+    announcer.containerCenter.x = quadrantCenterX
+    announcer.containerCenter.y = quadrantCenterY - height / 2f
+
+    // animations
+
+    when (announcer.state) {
+        Announcer.AnimState.Growing -> {
+            announcer.scale.update(ctx.elapsedTime)
+
+            if (!announcer.scale.animating) {
+                announcer.state = Announcer.AnimState.Shrinking
+                announcer.scale.duration = Announcer.SHRINKING_DURATION
+                announcer.scale.easing = AnimationEasing.EaseInSquared
+                announcer.scale.begin(ctx.elapsedTime, 1f)
+            }
+        }
+
+        Announcer.AnimState.Shrinking -> {
+            announcer.scale.update(ctx.elapsedTime)
+            if (!announcer.scale.animating) {
+                announcer.state = Announcer.AnimState.Stable
+                announcer.stableStartTime = ctx.elapsedTime
+            }
+        }
+
+        Announcer.AnimState.Stable -> {
+            announcer.scale.update(ctx.elapsedTime)
+            announcer.rot.update(ctx.elapsedTime)
+
+            if (ctx.elapsedTime - announcer.stableStartTime >= Announcer.STABLE_DURATION) {
+                announcer.state = Announcer.AnimState.Disappearing
+
+                announcer.scale.duration = Announcer.DISAPPEARING_DURATION
+                announcer.scale.easing = AnimationEasing.EaseOutSquared
+                announcer.scale.begin(ctx.elapsedTime, 3f)
+
+                announcer.alpha.current = 255
+                announcer.alpha.duration = Announcer.DISAPPEARING_DURATION
+                announcer.alpha.easing = AnimationEasing.EaseOutSquared
+                announcer.alpha.begin(ctx.elapsedTime, 0)
+            }
+        }
+
+        Announcer.AnimState.Disappearing -> {
+            announcer.alpha.update(ctx.elapsedTime)
+            announcer.scale.update(ctx.elapsedTime)
+
+            if (!announcer.alpha.animating && !announcer.scale.animating) {
+                announcer.state = Announcer.AnimState.None
+            }
+        }
+
+        Announcer.AnimState.None -> Unit
+    }
+}
+
+fun announcerRender(announcer: Announcer, renderer: Renderer) {
+    fun renderTextWithStroke(
+        renderer: Renderer,
+        text: String,
+        pos: Vec2,
+        textSize: Float,
+        strokeWidth: Float,
+        fontWeight: FontWeight,
+        font: String,
+        clr: Int,
+        strokeColor: Int,
+    ) {
+        renderer.drawText(text, pos.x, pos.y, clr, textSize, fontWeight, font)
+        renderer.strokeText(text, pos.x, pos.y, strokeWidth, strokeColor, textSize, fontWeight, font)
+    }
+
+    fun render(clr: Int, strokeClr: Int) {
+        renderer.save()
+        renderer.scale(
+            announcer.scale.current,
+            announcer.scale.current,
+            announcer.containerCenter.x,
+            announcer.containerCenter.y,
+        )
+
+        val rot = if (announcer.rot.animating) {
+            announcer.rot.current
+        } else {
+            announcer.rotation
+        }
+
+        renderer.rotate(
+            rot,
+            announcer.containerCenter.x,
+            announcer.containerCenter.y,
+        )
+
+        val multPosition = announcer.multiplierTextPosition
+        renderTextWithStroke(
+            renderer,
+            announcer.multiplierText,
+            multPosition,
+            announcer.multiplierTextSize,
+            announcer.multiplierStrokeWidth,
+            FontWeight.Bold,
+            FONT_MANROPE,
+            clr,
+            strokeClr,
+        )
+
+        val scorePosition = announcer.scoreTextPosition
+        renderTextWithStroke(
+            renderer,
+            announcer.scoreText,
+            scorePosition,
+            announcer.scoreTextSize,
+            announcer.scoreTextStrokeWidth,
+            FontWeight.Bold,
+            FONT_MANROPE,
+            clr,
+            strokeClr,
+        )
+
+        renderer.restore()
+    }
+
+    when (announcer.state) {
+        Announcer.AnimState.Growing,
+        Announcer.AnimState.Shrinking,
+        Announcer.AnimState.Stable -> {
+            render(Color.WHITE, Color.BLACK)
+        }
+
+        Announcer.AnimState.Disappearing -> {
+            render(
+                Color.addAlpha(announcer.alpha.current, Color.WHITE),
+                Color.addAlpha(announcer.alpha.current, Color.BLACK),
+            )
+        }
+
+        Announcer.AnimState.None -> Unit
+    }
+
+}
+
+
 sealed interface GameState {
     data object Countdown : GameState
     data object Placing : GameState
@@ -767,6 +1055,7 @@ class GameContext(
     var shapesPlaced = 0
     var roundDuration = 5f
     var score = 0
+    val announcer = Announcer(48f * scaledDensity, 1f * scaledDensity, 32f * scaledDensity, 1f * scaledDensity)
 }
 
 fun GameContext.reset() {
@@ -856,9 +1145,7 @@ fun clearFilled(ctx: GameContext) {
         }
     }
 
-    fun resultBeginExplosion(result: Result, elapsedTime: Float, delay: Float, scoreMultiplier: Int): Float {
-        println(delay)
-
+    fun resultBeginExplosion(result: Result, elapsedTime: Float, delay: Float, scoreMultiplier: Int) {
         // first
         run {
             val idx = result.coordsToIdx(result.fixedCoord, result.start)
@@ -899,13 +1186,14 @@ fun clearFilled(ctx: GameContext) {
 
             offset += 1
         }
-
-        val maxDelay = (offset - 1) * EXPLOSION_DELAY
-        return maxDelay
     }
 
     var animating = false
     var scoreMultiplier = 1
+
+    var count = 0
+    var firstCol = -1
+    var firstRow = -1
     var rowDelay = 0f
     var colDelay = 0f
 
@@ -924,27 +1212,34 @@ fun clearFilled(ctx: GameContext) {
                 break
             }
 
-            if (rowResult.filled) {
-                resultProcess(rowResult, j)
-            }
-            if (colResult.filled) {
-                resultProcess(colResult, j)
-            }
+            if (rowResult.filled) resultProcess(rowResult, j)
+            if (colResult.filled) resultProcess(colResult, j)
         }
 
         if (rowResult.filled) {
+            if (firstRow == -1) {
+                firstRow = i
+                firstCol = rowResult.start
+            }
+
             animating = true
             resultBeginExplosion(rowResult, ctx.elapsedTime, rowDelay, scoreMultiplier)
 
+            count += 1
             scoreMultiplier += 1
             rowDelay += EXPLOSION_START_CLEAR_DELAY
-
         }
 
         if (colResult.filled) {
+            if (firstCol == -1) {
+                firstCol = i
+                firstRow = colResult.start
+            }
+
             animating = true
             resultBeginExplosion(colResult, ctx.elapsedTime, colDelay, scoreMultiplier)
 
+            count += 1
             scoreMultiplier += 1
             colDelay += EXPLOSION_START_CLEAR_DELAY
         }
@@ -952,6 +1247,13 @@ fun clearFilled(ctx: GameContext) {
 
     if (animating) {
         ctx.state = GameState.AnimatingCellsExplosion
+        val type = when (count) {
+            1 -> AnnouncerType.Single
+            2 -> AnnouncerType.Double
+            3 -> AnnouncerType.Triple
+            else -> AnnouncerType.Quadruple
+        }
+        announcerAnnounce(ctx.announcer, type, firstCol, firstRow, ctx.elapsedTime)
     }
 }
 
@@ -1019,10 +1321,14 @@ fun GameContext.update(touch: Touch) {
 
     // score announcer
 
-    for (cell in cells) {
-        if (cell.scoreAnnouncer.animating) {
-            cell.scoreAnnouncer.update()
-        }
+    // for (cell in cells) {
+    //     if (cell.scoreAnnouncer.animating) {
+    //         cell.scoreAnnouncer.update()
+    //     }
+    // }
+
+    if (announcer.state != Announcer.AnimState.None) {
+        announcerUpdate(announcer, this)
     }
 
     val currentState = state
@@ -1188,7 +1494,7 @@ fun GameContext.update(touch: Touch) {
 
                 if (cell.explosionState != CellExplosionState.None) {
                     if (cellUpdateExplosion(cell, elapsedTime)) {
-                        cell.scoreAnnouncer.begin(cell.scoreReward)
+                        announcerAddScore(announcer, cell.scoreReward, elapsedTime)
                         addScore(cell.scoreReward)
                     }
 
@@ -1247,9 +1553,9 @@ fun GameContext.render() {
                 renderCell(this, coords, cell.color)
             }
 
-            if (cell.scoreAnnouncer.animating) {
-                cell.scoreAnnouncer.render()
-            }
+            // if (cell.scoreAnnouncer.animating) {
+            //     cell.scoreAnnouncer.render()
+            // }
         }
     }
 
@@ -1309,5 +1615,9 @@ fun GameContext.render() {
         }
 
         GameState.GameOver -> Unit
+    }
+
+    if (announcer.state != Announcer.AnimState.None) {
+        announcerRender(announcer, renderer)
     }
 }

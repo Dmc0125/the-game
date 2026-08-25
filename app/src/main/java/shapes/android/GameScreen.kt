@@ -69,6 +69,7 @@ fun GameScreen(
                     DebugAction.SpawnSingleCellShape -> gameView.value?.debugSpawnShape()
                     DebugAction.PlaceShape -> gameView.value?.handleShapePlace()
                     DebugAction.FillDouble -> gameView.value?.debugFillDouble()
+                    DebugAction.Announce -> gameView.value?.debugAnnounce()
                 }
             }
             DebugActions.register(handler)

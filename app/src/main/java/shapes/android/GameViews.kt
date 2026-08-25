@@ -76,6 +76,14 @@ class CanvasRenderer : Renderer {
         canvas?.rotate(angle, x, y)
     }
 
+    override fun scale(scaleX: Float, scaleY: Float) {
+        canvas?.scale(scaleX, scaleY)
+    }
+
+    override fun scale(scaleX: Float, scaleY: Float, x: Float, y: Float) {
+        canvas?.scale(scaleX, scaleY, x, y)
+    }
+
     override fun drawRoundRect(x: Float, y: Float, width: Float, height: Float, radius: Float, color: Int) {
         paint.reset()
         paint.color = color
@@ -276,6 +284,10 @@ class GameView(
     fun debugSpawnShape() {
         game.currentShape = CurrentShape(game, 0)
         game.state = GameState.Placing
+    }
+
+    fun debugAnnounce() {
+        announcerAnnounce(game.announcer, AnnouncerType.Single, 0, 0, game.elapsedTime)
     }
 
     //

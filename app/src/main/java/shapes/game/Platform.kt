@@ -39,6 +39,8 @@ interface Renderer {
     fun restore()
     fun translate(x: Float, y: Float)
     fun rotate(angle: Float, x: Float, y: Float)
+    fun scale(scaleX: Float, scaleY: Float)
+    fun scale(scaleX: Float, scaleY: Float, x: Float, y: Float)
 
     fun drawRoundRect(x: Float, y: Float, width: Float, height: Float, radius: Float, color: Int)
     fun drawRoundRect(rect: Rect, radius: Float, color: Int)
@@ -66,6 +68,8 @@ interface Renderer {
         override fun restore() = Unit
         override fun translate(x: Float, y: Float) = Unit
         override fun rotate(angle: Float, x: Float, y: Float) = Unit
+        override fun scale(scaleX: Float, scaleY: Float) = Unit
+        override fun scale(scaleX: Float, scaleY: Float, x: Float, y: Float) = Unit
 
         override fun drawRoundRect(x: Float, y: Float, width: Float, height: Float, radius: Float, color: Int) = Unit
         override fun drawRoundRect(rect: Rect, radius: Float, color: Int) = Unit
