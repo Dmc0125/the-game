@@ -111,3 +111,26 @@ interface Renderer {
         ) = Unit
     }
 }
+
+interface Trace {
+    fun beginSection(name: String)
+    fun endSection()
+
+    object Default : Trace {
+        override fun beginSection(name: String) = Unit
+        override fun endSection() = Unit
+    }
+}
+
+object Platform {
+    var trace: Trace = Trace.Default
+    var renderer: Renderer = Renderer.Default
+
+    fun withTrace(t: Trace) {
+        trace = t
+    }
+
+    fun withRenderer(r: Renderer) {
+        renderer = r
+    }
+}

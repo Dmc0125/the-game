@@ -234,22 +234,20 @@ class GameView(
     var renderer = CanvasRenderer()
     val metrics = Metrics(10f)
 
-    init {
-        game.renderer = renderer
-    }
-
     // debug
 
     fun debugExplodeCell() {
+        // NOTE: does not continue after the explosion because of the announcer
+
         val center = CELLS_COUNT / 2
         val cell = game.board.cells[center * CELLS_COUNT + center]
 
         cell.filled = true
         cell.color = colors[0]
         cell.filledAt = game.elapsedTime
-        cellBeginExplosion(cell, 0f, game.elapsedTime)
+        cellBeginClearingAnimation(cell, 0f, game.elapsedTime)
 
-        game.state = GameState.AnimatingCellsExplosion
+        game.state = GameState.ClearingAnimation
     }
 
     fun debugFillRow() {
@@ -264,6 +262,7 @@ class GameView(
         }
 
         boardClearFilledCells(game.board, game.elapsedTime)
+        game.state = GameState.ClearingAnimation
     }
 
     fun debugFillDouble() {
@@ -279,6 +278,7 @@ class GameView(
         }
 
         boardClearFilledCells(game.board, game.elapsedTime)
+        game.state = GameState.ClearingAnimation
     }
 
     fun debugSpawnShape() {
@@ -345,6 +345,7 @@ class GameView(
         if (!running) return
 
         renderer.canvas = canvas
+        Platform.withRenderer(renderer)
 
         val currentTime = System.nanoTime()
         val delaTimeNanos = (currentTime - lastFrameTime)

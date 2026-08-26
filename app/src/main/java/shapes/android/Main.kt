@@ -46,12 +46,20 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import shapes.game.FontWeight
+import shapes.game.Platform
 
 const val RADIUS = 8f
+
+class AndroidTrace : shapes.game.Trace {
+    override fun beginSection(name: String) = android.os.Trace.beginSection(name)
+    override fun endSection() = android.os.Trace.endSection()
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        Platform.withTrace(AndroidTrace())
 
         AppFont.initFont(this, shapes.game.FONT_DMMONO)
         AppFont.initFont(this, shapes.game.FONT_MANROPE)

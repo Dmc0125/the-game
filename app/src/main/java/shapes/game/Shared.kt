@@ -1,7 +1,5 @@
 package shapes.game
 
-import android.util.Log
-
 // TODO: maybe rewrite these into value class so they do not allocate
 
 data class Vec2(var x: Float, var y: Float) {
@@ -82,30 +80,4 @@ data class Coords(var col: Int, var row: Int) {
     fun toVec2(): Vec2 {
         return Vec2(col.toFloat(), row.toFloat())
     }
-}
-
-fun logd(message: String) {
-    if (shapes.BuildConfig.LOG_DEBUG) {
-        Log.d("ShapesGame", message)
-    }
-}
-
-typealias Block = () -> Unit
-
-fun <T> withDefer(block: ((Block) -> Unit) -> T): T {
-    val defers = Array<() -> Unit>(10) { {} }
-    var defersCount = 0
-
-    fun defer(deferred: Block) {
-        defers[defersCount] = deferred
-        defersCount++
-    }
-
-    val result = block(::defer)
-
-    for (i in 0 until defersCount) {
-        defers[i]()
-    }
-
-    return result
 }
