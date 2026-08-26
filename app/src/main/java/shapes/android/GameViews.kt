@@ -287,7 +287,7 @@ class GameView(
     }
 
     fun debugAnnounce() {
-        announcerAnnounce(game.announcer, AnnouncerType.Single, 0, 0, game.elapsedTime)
+        announcerAnnounce(game.announcer, "x1", 0, 0, game.elapsedTime)
         announcerUpdate(game.announcer, game.layout, game.elapsedTime)
     }
 

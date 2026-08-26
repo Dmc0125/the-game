@@ -1,5 +1,21 @@
 # Shapes game
 
+## Scoring
+
+- Each placed cell adds 1 point
+  - Unless it's forced to a different location beucase of time, then it subtracts 10 points
+
+- Each cleared row or column adds 10 points per cell
+  - If row and column are cleared simultaneously with an intersection, and the multiplier is applied on both of them, it's harder to clear this, than multiple rows or columns separately
+
+- Each cleared row or column add 1 to the score multiplier, that is preserved to the next round
+- The multiplier is bumped down by 1 after each round that no cells are cleared, stopping at 1
+
+## Announcer
+
+- update at each line pop
+- at the end, animate to 0 white the scoreboard animates up ?
+
 ## TODO
 
 ### MVP Game
