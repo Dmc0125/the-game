@@ -44,13 +44,13 @@ object AppFont {
     }
 }
 
-fun AppFont.typeface(name: String, weight: FontWeight): Typeface {
+fun AppFont.typeface(name: String = FONT_SUPPLY_CENTER, weight: FontWeight = FontWeight.Regular): Typeface {
     val face = fonts[AppFont.FontKey(name, weight)]?.typeface
     require(face != null) { "Font not found: $name $weight" }
     return face
 }
 
-fun AppFont.family(name: String, weight: FontWeight): FontFamily {
+fun AppFont.family(name: String = FONT_SUPPLY_CENTER, weight: FontWeight = FontWeight.Regular): FontFamily {
     val family = fonts[AppFont.FontKey(name, weight)]?.family
     require(family != null) { "Font not found: $name $weight" }
     return family
@@ -288,6 +288,7 @@ class GameView(
 
     fun debugAnnounce() {
         announcerAnnounce(game.announcer, AnnouncerType.Single, 0, 0, game.elapsedTime)
+        announcerUpdate(game.announcer, game.layout, game.elapsedTime)
     }
 
     //

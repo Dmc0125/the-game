@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -39,6 +40,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,7 +50,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import shapes.game.FontWeight
 import shapes.game.Platform
 
-const val RADIUS = 8f
+const val RADIUS = 24
+const val BORDER_WIDTH = 3
 
 class AndroidTrace : shapes.game.Trace {
     override fun beginSection(name: String) = android.os.Trace.beginSection(name)
@@ -63,6 +66,7 @@ class MainActivity : ComponentActivity() {
 
         AppFont.initFont(this, shapes.game.FONT_DMMONO)
         AppFont.initFont(this, shapes.game.FONT_MANROPE)
+        AppFont.initFont(this, shapes.game.FONT_SUPPLY_CENTER)
 
         enableEdgeToEdge()
         this.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -110,25 +114,26 @@ fun App() {
     }
 
     Box(
-        modifier = Modifier.fillMaxSize().background(Color(shapes.game.Color.YELLOW)),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(shapes.game.Color.vanilla)),
         contentAlignment = Alignment.Center,
     ) {
         when (screen) {
             Screen.Start -> {
-                Button(
-                    backgroundColor = Color(shapes.game.Color.BLUE),
-                    paddingHorizontal = 32.dp,
-                    paddingVertical = 20.dp,
-                    onClick = { showScreen(Screen.Playing) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 48.dp),
+                    contentAlignment = Alignment.BottomCenter,
                 ) {
-                    BasicText(
-                        text = "Start",
-                        style = TextStyle(
-                            color = Color.Black,
-                            fontSize = 24.sp,
-                            fontFamily = AppFont.family(shapes.game.FONT_MANROPE, FontWeight.Bold)
-                        )
-                    )
+                    AppButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color(shapes.game.Color.blue),
+                        onClick = { screen = Screen.Playing },
+                    ) {
+                        Text("START", 24)
+                    }
                 }
             }
 
@@ -200,7 +205,7 @@ fun DebugMenu(
                         DebugMenuButton(
                             modifier = Modifier.weight(1f),
                             text = target.debugShortLabel(),
-                            backgroundColor = if (target == screen) Color(shapes.game.Color.BLUE) else Color.White,
+                            backgroundColor = if (target == screen) Color(shapes.game.Color.blue) else Color.White,
                             onClick = { onScreenChange(target) },
                         )
                     }
@@ -248,7 +253,7 @@ fun DebugMenu(
 
         Button(
             modifier = Modifier.wrapContentWidth(),
-            backgroundColor = Color(shapes.game.Color.PINK),
+            backgroundColor = Color(shapes.game.Color.red),
             paddingHorizontal = 8.dp,
             paddingVertical = 8.dp,
             neobrutalistShadow = false,
@@ -318,6 +323,76 @@ fun Modifier.neobrutalistShadow(
 }
 
 @Composable
+fun Modifier.appShadow(
+    color: Color = Color.Black,
+    shadowOffset: Dp = 4.dp,
+    cornerRadius: Dp = RADIUS.dp,
+) =
+    drawBehind {
+        drawRoundRect(
+            color = Color.Black,
+            topLeft = Offset(shadowOffset.toPx(), shadowOffset.toPx()),
+            cornerRadius = CornerRadius(cornerRadius.toPx()),
+            size = size,
+        )
+    }
+
+@Composable
+fun AppButton(
+    modifier: Modifier = Modifier,
+    color: Color = Color.White,
+    horizontalPadding: Dp = 32.dp,
+    verticalPadding: Dp = 24.dp,
+    onClick: () -> Unit,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val shadowOffset = 4.dp
+    val radius = RADIUS.dp
+
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val animTranslation by animateDpAsState(
+        targetValue = if (pressed) shadowOffset else 0.dp,
+        label = "shadow_translation",
+    )
+
+    val m = modifier
+        .graphicsLayer {
+            translationX = animTranslation.toPx()
+            translationY = animTranslation.toPx()
+        }
+        .clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            onClick = onClick,
+        )
+        .fillMaxWidth()
+        .appShadow(Color.Black, shadowOffset - animTranslation, radius)
+        .background(color, RoundedCornerShape(radius))
+        .border(BORDER_WIDTH.dp, Color.Black, RoundedCornerShape(radius))
+        .padding(horizontal = horizontalPadding, vertical = verticalPadding)
+
+    Box(m, content = content)
+}
+
+@Composable
+fun Text(
+    text: String,
+    fontSize: Int,
+    color: Color = Color(shapes.game.Color.ink),
+    fontFamily: FontFamily = AppFont.family(),
+) {
+    BasicText(
+        text = text,
+        style = TextStyle(
+            color = color,
+            fontSize = fontSize.sp,
+            fontFamily = fontFamily,
+        )
+    )
+}
+
+@Composable
 fun Button(
     modifier: Modifier = Modifier,
     backgroundColor: Color = Color.White,
@@ -371,7 +446,8 @@ fun Button(
         )
     }
 
-    buttonModifier = buttonModifier.background(backgroundColor, RoundedCornerShape(RADIUS.dp))
+    buttonModifier = buttonModifier
+        .background(backgroundColor, RoundedCornerShape(RADIUS.dp))
         .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
         .padding(horizontal = paddingHorizontal, vertical = paddingVertical)
 

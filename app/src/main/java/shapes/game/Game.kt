@@ -5,13 +5,14 @@ import kotlin.random.Random
 
 const val FONT_MANROPE = "manrope"
 const val FONT_DMMONO = "dmmono"
+const val FONT_SUPPLY_CENTER = "supplycenter"
 
 const val RADIUS = 8f
 const val CELLS_COUNT = 12
 const val SHAPE_CELLS_COUNT = 4
 const val CELL_PADDING_FRACTION = 0.075f
 const val CELL_RADIUS_FRACTION = 0.25f
-const val PLAYGROUND_PADDING_FRACTION = 0.02f
+const val PLAYGROUND_PADDING_FRACTION = 0.04f
 const val DRAG_SENSITIVITY = 1.75f
 const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
 
@@ -20,16 +21,17 @@ const val EXPLOSION_DELAY = 0.02f
 const val DEFAULT_CELL_CLEAR_REWARD = 10
 
 object Color {
-    val WHITE = Color.rgb(255, 255, 255)
-    val RED = Color.rgb(197, 40, 61)
-    val OVERLAPPING = Color.addAlpha(200, RED)
-    val YELLOW = Color.rgb(226, 239, 112)
-    val BLACK = Color.rgb(39, 43, 43)
+    const val black = 0xff000000.toInt()
+    const val white = 0xffffffff.toInt()
 
-    val BLUE = Color.rgb(112, 228, 239)
-    val PURPLE = Color.rgb(203, 66, 159)
-    val ORANGE = Color.rgb(217, 93, 57)
-    val PINK = Color.rgb(227, 86, 124)
+    const val ink = 0xff182622.toInt()
+    const val vanilla = 0xfff4eddd.toInt()
+
+    const val blue = 0xff65bed0.toInt()
+    const val red = 0xfff25b43.toInt()
+    const val lime = 0xffbadd67.toInt()
+    const val yellow = 0xfff2c94c.toInt()
+    const val purple = 0xff8069b2.toInt()
 
     fun rgb(r: Int, g: Int, b: Int): Int {
         return 0xff000000.toInt() or ((r and 0xff) shl 16) or
@@ -50,11 +52,23 @@ object Color {
 }
 
 val colors: Array<Int> = arrayOf(
-    Color.BLUE,
-    Color.PURPLE,
-    Color.ORANGE,
-    Color.PINK,
+    Color.blue,
+    Color.lime,
+    Color.yellow,
+    Color.purple,
 )
+
+fun measureText(text: String, textSize: Float): Float {
+    return Platform.renderer.measureText(text, textSize, FontWeight.Regular, FONT_SUPPLY_CENTER)
+}
+
+fun drawText(text: String, x: Float, y: Float, color: Int, textSize: Float) {
+    Platform.renderer.drawText(text, x, y, color, textSize, FontWeight.Regular, FONT_SUPPLY_CENTER)
+}
+
+fun strokeText(text: String, x: Float, y: Float, strokeWidth: Float, color: Int, textSize: Float) {
+    Platform.renderer.strokeText(text, x, y, strokeWidth, color, textSize, FontWeight.Regular, FONT_SUPPLY_CENTER)
+}
 
 fun generateShapeOffsets(base: Array<Coords>): Array<Array<Coords>> {
     fun center(offsets: Array<Coords>): Array<Coords> {
@@ -211,7 +225,6 @@ data class Animation<T>(
 
 class Countdown(val textSizeStart: Float, val textSizeEnd: Float) {
     val textSizeDiff = textSizeEnd - textSizeStart
-
     var text: String = ""
     var textSize: Float = 0f
     var start = 0f
@@ -240,7 +253,7 @@ fun countdownUpdate(countdown: Countdown, layout: Layout, elapsedTime: Float): B
         countdown.opacity = 1f - 1f * dt
     }
 
-    val textWidth = Platform.renderer.measureText(countdown.text, countdown.textSize, FontWeight.Medium, FONT_DMMONO)
+    val textWidth = measureText(countdown.text, countdown.textSize)
     countdown.textX = layout.pgRect.x + (layout.pgRect.width - textWidth) / 2
     countdown.textY = layout.pgRect.y + countdown.textSize + (layout.pgRect.height - countdown.textSize) / 2
 
@@ -249,14 +262,12 @@ fun countdownUpdate(countdown: Countdown, layout: Layout, elapsedTime: Float): B
 
 fun countdownRender(countdown: Countdown) {
     val color = Color.argb((countdown.opacity * 255).toInt(), 255, 255, 255)
-    Platform.renderer.drawText(
+    drawText(
         countdown.text,
         countdown.textX,
         countdown.textY,
         color,
         countdown.textSize,
-        FontWeight.Medium,
-        FONT_DMMONO
     )
 }
 
@@ -545,7 +556,7 @@ fun currentShapeRender(currentShape: CurrentShape, layout: Layout) {
 
         for (cellOffset in cells) {
             val clr = if (currentShape.overlapping) {
-                Color.OVERLAPPING
+                Color.addAlpha(200, Color.red)
             } else {
                 currentShape.color
             }
@@ -720,7 +731,7 @@ fun cellBeginClearingAnimation(cell: Cell, delay: Float, elapsedTime: Float) {
     cell.chargeColorAnim.current = cell.color
     cell.chargeColorAnim.duration = Cell.GROWING_DURATION
     cell.chargeColorAnim.easing = AnimationEasing.EaseInSquared
-    cell.chargeColorAnim.begin(elapsedTime, Color.WHITE)
+    cell.chargeColorAnim.begin(elapsedTime, Color.white)
 
     cell.scaleAnim.delay = 0f
     cell.scaleAnim.current = 1f
@@ -801,10 +812,10 @@ sealed interface AnnouncerType {
     data object Quadruple : AnnouncerType
 
     fun string(): String = when (this) {
-        Single -> "Single"
-        Double -> "Double"
-        Triple -> "Triple"
-        Quadruple -> "Quadruple"
+        Single -> "SINGLE"
+        Double -> "DOUBLE"
+        Triple -> "TRIPLE"
+        Quadruple -> "QUADRUPLE"
     }
 }
 
@@ -921,19 +932,12 @@ fun announcerUpdate(announcer: Announcer, layout: Layout, elapsedTime: Float) {
     val containerBottomY = quadrantCenterY + height / 2f
     val containerTopY = containerBottomY - height - spacing
 
-    announcer.multiplierTextWidth =
-        Platform.renderer.measureText(
-            announcer.multiplierText,
-            announcer.multiplierTextSize,
-            FontWeight.Bold,
-            FONT_MANROPE
-        )
+    announcer.multiplierTextWidth = measureText(announcer.multiplierText, announcer.multiplierTextSize)
     announcer.multiplierTextPosition.x = quadrantCenterX - announcer.multiplierTextWidth / 2f
     announcer.multiplierTextPosition.y = containerTopY + announcer.multiplierTextSize
 
     announcer.scoreText = "%d".format(announcer.score)
-    announcer.scoreTextWidth =
-        Platform.renderer.measureText(announcer.scoreText, announcer.scoreTextSize, FontWeight.Bold, FONT_MANROPE)
+    announcer.scoreTextWidth = measureText(announcer.scoreText, announcer.scoreTextSize)
     announcer.scoreTextPosition.x = quadrantCenterX - announcer.scoreTextWidth / 2f
     announcer.scoreTextPosition.y = containerBottomY
 
@@ -999,13 +1003,11 @@ fun announcerRender(announcer: Announcer) {
         pos: Vec2,
         textSize: Float,
         strokeWidth: Float,
-        fontWeight: FontWeight,
-        font: String,
         clr: Int,
         strokeColor: Int,
     ) {
-        Platform.renderer.drawText(text, pos.x, pos.y, clr, textSize, fontWeight, font)
-        Platform.renderer.strokeText(text, pos.x, pos.y, strokeWidth, strokeColor, textSize, fontWeight, font)
+        drawText(text, pos.x, pos.y, clr, textSize)
+        strokeText(text, pos.x, pos.y, strokeWidth, strokeColor, textSize)
     }
 
     fun render(clr: Int, strokeClr: Int) {
@@ -1035,8 +1037,6 @@ fun announcerRender(announcer: Announcer) {
             multPosition,
             announcer.multiplierTextSize,
             announcer.multiplierStrokeWidth,
-            FontWeight.Bold,
-            FONT_MANROPE,
             clr,
             strokeClr,
         )
@@ -1047,8 +1047,6 @@ fun announcerRender(announcer: Announcer) {
             scorePosition,
             announcer.scoreTextSize,
             announcer.scoreTextStrokeWidth,
-            FontWeight.Bold,
-            FONT_MANROPE,
             clr,
             strokeClr,
         )
@@ -1060,13 +1058,13 @@ fun announcerRender(announcer: Announcer) {
         Announcer.AnimState.Growing,
         Announcer.AnimState.Shrinking,
         Announcer.AnimState.Stable -> {
-            render(Color.WHITE, Color.BLACK)
+            render(Color.white, Color.black)
         }
 
         Announcer.AnimState.Disappearing -> {
             render(
-                Color.addAlpha(announcer.alpha.current, Color.WHITE),
-                Color.addAlpha(announcer.alpha.current, Color.BLACK),
+                Color.addAlpha(announcer.alpha.current, Color.white),
+                Color.addAlpha(announcer.alpha.current, Color.black),
             )
         }
 
@@ -1269,7 +1267,7 @@ fun boardUpdateClearingCells(board: Board, elapsedTime: Float): Pair<Int, Boolea
 }
 
 fun boardRender(board: Board, layout: Layout) {
-    Platform.renderer.drawRoundRect(layout.pgRect, RADIUS * layout.pixelDensity, Color.BLACK)
+    Platform.renderer.drawRoundRect(layout.pgRect, 24 * layout.pixelDensity, Color.ink)
 
     for ((cellIdx, cell) in board.cells.withIndex()) {
         if (cell.filled && cell.clearState == CellClearState.None) {

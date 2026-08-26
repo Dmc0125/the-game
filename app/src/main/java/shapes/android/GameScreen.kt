@@ -1,5 +1,6 @@
 package shapes.android
 
+import androidx.compose.animation.VectorConverter
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -11,9 +12,6 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEvent
@@ -23,12 +21,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import kotlinx.coroutines.delay
-import shapes.game.FONT_DMMONO
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import shapes.game.FONT_MANROPE
+import shapes.game.FONT_SUPPLY_CENTER
 import shapes.game.FontWeight
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
 
 private fun Modifier.forwardUncomsumedTouches(onTouch: (PointerEvent) -> Unit): Modifier {
     return pointerInput(Unit) {
@@ -79,18 +76,131 @@ fun GameScreen(
 
     Column(
         modifier = Modifier
-            .padding(start = 20.dp, top = 48.dp, end = 20.dp)
+            .padding(horizontal = 16.dp, vertical = 48.dp)
             .fillMaxSize()
             .forwardUncomsumedTouches { gameView.value?.handleTouch(it) },
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        // top bar
+
+        val topBarHeight = 90.dp
         val nextShapeView = remember { mutableStateOf<NextShapeView?>(null) }
         val score = remember { mutableStateOf(0) }
 
-        TopBar(score.value, onViewReady = { nextShapeView.value = it })
+        Row(
+            modifier = Modifier.fillMaxWidth().height(topBarHeight),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            // score
+            Column(
+                Modifier
+                    .fillMaxHeight()
+                    .weight(2f)
+                    .appShadow()
+                    .background(Color(shapes.game.Color.blue), RoundedCornerShape(RADIUS.dp))
+                    .border(BORDER_WIDTH.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+            ) {
+                Text("SCORE", fontSize = 10)
+                Column(Modifier.fillMaxSize(), Arrangement.Center) {
+                    Text("%06d".format(score.value), fontSize = 32)
+                }
+            }
+
+            // next shape
+            Column(
+                Modifier
+                    .fillMaxHeight()
+                    .weight(1f)
+                    .appShadow()
+                    .background(Color(shapes.game.Color.ink), RoundedCornerShape(RADIUS.dp))
+                    .border(BORDER_WIDTH.dp, Color.Black, RoundedCornerShape(RADIUS.dp))
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+            ) {
+                Text("NEXT", fontSize = 10, Color(shapes.game.Color.vanilla))
+                Row(Modifier.fillMaxSize().padding(vertical = 4.dp), Arrangement.Center) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxHeight().aspectRatio(1f),
+                        factory = { context ->
+                            NextShapeView(context).also {
+                                nextShapeView.value = it
+                            }
+                        }
+                    )
+                }
+            }
+        }
 
         val timerController = remember { TimerController() }
-        Timer(timerController)
+
+        // timer
+
+        Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(20.dp)) {
+            val progress = remember { Animatable(0f) }
+            val duration = remember { mutableFloatStateOf(0f) }
+            val initialColor = remember { Color(shapes.game.Color.lime) }
+            val color = remember {
+                Animatable(
+                    initialColor,
+                    typeConverter = Color.VectorConverter(initialColor.colorSpace),
+                )
+            }
+
+            LaunchedEffect(timerController.command) {
+                when (val cmd = timerController.command) {
+                    is TimerCommand.Start -> {
+                        duration.value = cmd.duration
+                        coroutineScope {
+                            launch {
+                                progress.snapTo(1f)
+                                progress.animateTo(
+                                    0f, tween(
+                                        (cmd.duration * 1000f).toInt(),
+                                        easing = LinearEasing,
+                                    )
+                                )
+                            }
+                            launch {
+                                color.snapTo(initialColor)
+                                color.animateTo(
+                                    Color(shapes.game.Color.red), tween(
+                                        (cmd.duration * 1000f).toInt(),
+                                        easing = LinearEasing,
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    TimerCommand.Stop -> progress.stop()
+                    null -> Unit
+                }
+            }
+
+            // remaining seconds
+
+            Box(Modifier.width(30.dp)) {
+                val remaining = progress.value * duration.value
+                Text("%.01fs".format(remaining), 10)
+            }
+
+            // bar
+
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(12.dp)
+                    .background(Color(shapes.game.Color.ink), RoundedCornerShape(6.dp))
+                    .padding(3.dp),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(progress.value)
+                        .background(color.value, RoundedCornerShape(3.dp)),
+                )
+            }
+        }
 
         // game
 
@@ -98,7 +208,6 @@ fun GameScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .neobrutalistShadow()
                 .graphicsLayer { clip = false },
         ) {
             AndroidView(
@@ -135,7 +244,7 @@ fun GameScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
-                            Color(shapes.game.Color.addAlpha(200, shapes.game.Color.BLACK)),
+                            Color(shapes.game.Color.addAlpha(200, shapes.game.Color.ink)),
                             RoundedCornerShape(RADIUS.dp)
                         ),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -190,125 +299,6 @@ fun GameScreen(
     }
 }
 
-@Composable
-fun TopBar(
-    score: Int,
-    onViewReady: (NextShapeView) -> Unit,
-) {
-    val height = 90.dp
-    val verticalPadding = 12.dp
-
-    val previousScore = remember { mutableStateOf(score) }
-    val scoreScale = remember { Animatable(1f) }
-
-    LaunchedEffect(score) {
-        if (score <= previousScore.value) {
-            scoreScale.snapTo(1f)
-            previousScore.value = score
-            return@LaunchedEffect
-        }
-
-        val nextScale = (scoreScale.value + 0.035f).coerceAtMost(1.3f)
-        scoreScale.animateTo(nextScale, tween(35))
-
-        delay(140.milliseconds)
-
-        scoreScale.animateTo(1f, tween(220))
-    }
-
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(height)
-            .neobrutalistShadow()
-            .background(Color.White, RoundedCornerShape(RADIUS.dp))
-            .border(3.dp, Color.Black, RoundedCornerShape(RADIUS.dp)),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        // score
-
-        Column(
-            modifier = Modifier
-                .padding(start = 20.dp, top = verticalPadding, bottom = verticalPadding)
-                .fillMaxHeight(),
-        ) {
-            BasicText(
-                text = "SCORE",
-                style = TextStyle(
-                    fontSize = 12.sp,
-                    fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Bold),
-                    color = Color.Black,
-                ),
-            )
-
-            Column(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .scale(scoreScale.value),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                BasicText(
-                    text = "%06d".format(score),
-                    style = TextStyle(
-                        fontSize = 40.sp,
-                        fontFamily = AppFont.family(FONT_DMMONO, FontWeight.Medium),
-                        color = Color.Black,
-                    ),
-                )
-            }
-        }
-
-        // next shape
-
-        Column(
-            Modifier
-                .fillMaxHeight()
-                .aspectRatio(1f)
-                .background(
-                    Color(shapes.game.Color.BLACK), RoundedCornerShape(
-                        topStart = 0.dp,
-                        topEnd = RADIUS.dp,
-                        bottomStart = 0.dp,
-                        bottomEnd = RADIUS.dp,
-                    )
-                )
-                .drawBehind {
-                    val width = 3.dp.toPx()
-                    drawLine(
-                        color = Color.Black,
-                        start = Offset(0f, 0f),
-                        end = Offset(0f, size.height),
-                        strokeWidth = width,
-                    )
-                }
-                .padding(verticalPadding),
-        ) {
-            BasicText(
-                text = "NEXT",
-                style = TextStyle(
-                    fontSize = 12.sp,
-                    fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Bold),
-                    color = Color.White,
-                ),
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                AndroidView(
-                    modifier = Modifier.fillMaxHeight().aspectRatio(1f),
-                    factory = { context ->
-                        NextShapeView(context).also {
-                            onViewReady(it)
-                        }
-                    }
-                )
-            }
-        }
-    }
-}
-
 sealed interface TimerCommand {
     data class Start(val commandCount: Int, val duration: Float) : TimerCommand
     data object Stop : TimerCommand
@@ -330,67 +320,6 @@ class TimerController {
 }
 
 @Composable
-fun Timer(controller: TimerController) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        val progress = remember { Animatable(1f) }
-        val duration = remember { mutableFloatStateOf(0f) }
-
-        LaunchedEffect(controller.command) {
-            val command = controller.command
-            when (command) {
-                is TimerCommand.Start -> {
-                    duration.value = command.duration
-
-                    progress.snapTo(1f)
-                    progress.animateTo(
-                        0f,
-                        animationSpec = tween(
-                            durationMillis = (command.duration * 1000f).toInt(),
-                            easing = LinearEasing,
-                        )
-                    )
-                }
-
-                TimerCommand.Stop -> progress.stop()
-                null -> Unit
-            }
-        }
-
-        BasicText(
-            text = "%.01fs".format(duration.value * progress.value),
-            modifier = Modifier.width(35.dp),
-            style = TextStyle(
-                fontSize = 12.sp,
-                fontFamily = AppFont.family(FONT_DMMONO, FontWeight.Medium),
-                color = Color.Black,
-            )
-        )
-
-        val padding = 3
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(12.dp)
-                .background(Color(shapes.game.Color.BLACK), RoundedCornerShape(RADIUS.dp))
-                .padding(padding.dp),
-        ) {
-            if (progress.value > 0f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(progress.value)
-                        .fillMaxHeight()
-                        .background(Color(shapes.game.Color.BLUE), RoundedCornerShape((RADIUS - padding).dp)),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun GameControls(
     onRotate: () -> Unit,
     onPlace: () -> Unit,
@@ -399,35 +328,26 @@ fun GameControls(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        Button(
-            paddingHorizontal = 32.dp,
-            paddingVertical = 32.dp,
+        AppButton(
+            Modifier.weight(1f),
             onClick = onRotate,
+            horizontalPadding = 0.dp,
+            verticalPadding = 0.dp,
         ) {
-            BasicText(
-                text = "R",
-                style = TextStyle(
-                    fontSize = 16.sp,
-                    fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Bold),
-                    color = Color.Black,
-                )
-            )
+            Box(Modifier.fillMaxWidth().height(90.dp), Alignment.Center) {
+                Text("R", fontSize = 16, Color(shapes.game.Color.ink))
+            }
         }
 
-        Button(
-            modifier = Modifier.fillMaxWidth(),
-            paddingHorizontal = 32.dp,
-            paddingVertical = 32.dp,
+        AppButton(
+            Modifier.weight(2f),
             onClick = onPlace,
+            horizontalPadding = 0.dp,
+            verticalPadding = 0.dp,
         ) {
-            BasicText(
-                text = "Place",
-                style = TextStyle(
-                    fontSize = 14.sp,
-                    fontFamily = AppFont.family(FONT_MANROPE, FontWeight.Bold),
-                    color = Color.Black,
-                )
-            )
+            Box(Modifier.fillMaxWidth().height(90.dp), Alignment.Center) {
+                Text("Place", fontSize = 16, Color(shapes.game.Color.ink))
+            }
         }
     }
 }
