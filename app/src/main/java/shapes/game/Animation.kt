@@ -1,5 +1,24 @@
 package shapes.game
 
+fun lerpColor(start: Int, end: Int, progress: Float): Int {
+    val a = (start shr 24) and 0xFF
+    val r = (start shr 16) and 0xFF
+    val g = (start shr 8) and 0xFF
+    val b = start and 0xFF
+
+    val targetA = (end shr 24) and 0xFF
+    val targetR = (end shr 16) and 0xFF
+    val targetG = (end shr 8) and 0xFF
+    val targetB = end and 0xFF
+
+    return Color.argb(
+        lerp(a, targetA, progress),
+        lerp(r, targetR, progress),
+        lerp(g, targetG, progress),
+        lerp(b, targetB, progress),
+    )
+}
+
 fun lerp(start: Float, end: Float, progress: Float): Float = start + (end - start) * progress
 fun lerp(start: Vec2, end: Vec2, progress: Float): Vec2 = start + (end - start) * progress
 fun lerp(start: Int, end: Int, progress: Float): Int = (start + (end - start) * progress).toInt()
@@ -26,53 +45,56 @@ val easeFunctions = mapOf(
     AnimationEasing.EaseOutCubic to ::easeOutCubic,
 )
 
-class Anim<T>(var current: T, var lerp: (start: T, end: T, progress: Float) -> T) {
-    var from = current
-    var to = current
-    var startTime: Float = 0f
-
+class Anim {
     var running = false
+    var startTime = 0f
     var duration = 0f
     var delay = 0f
-    var easing = AnimationEasing.Linear
+    var current = 0f
 }
 
-fun <T> animBegin(
-    anim: Anim<T>,
-    current: T,
-    to: T = anim.to,
-    easing: AnimationEasing = anim.easing,
-    delay: Float = 0f,
-    duration: Float = anim.duration,
-    lerp: (start: T, end: T, progress: Float) -> T = anim.lerp,
-    elapsedTime: Float,
-) {
+fun animBegin(anim: Anim, duration: Float, elapsedTime: Float, delay: Float = 0f) {
     anim.running = true
-    anim.current = current
-    anim.from = current
-    anim.to = to
-    anim.easing = easing
-    anim.delay = delay
     anim.startTime = elapsedTime
+    anim.duration = duration
+    anim.delay = delay
+    anim.current = 0f
 }
 
-fun <T> animUpdate(anim: Anim<T>, elapsedTime: Float) {
+fun animUpdate(anim: Anim, elapsedTime: Float): Boolean {
     if (!anim.running) {
-        return
+        return false
     }
 
-    val time = elapsedTime - anim.startTime
-    if (time < anim.delay) {
-        return
+    var elapsed = elapsedTime - anim.startTime
+    if (elapsed < anim.delay) {
+        return true
     }
 
-    val progress = (time - anim.delay) / anim.duration
-    if (progress >= 1f) {
-        anim.current = anim.to
+    elapsed -= anim.delay
+    if (elapsed >= anim.duration) {
+        anim.current = 1f
         anim.running = false
-        return
+        return false
     }
 
-    val t = easeFunctions[anim.easing]?.invoke(progress) ?: progress
-    anim.current = anim.lerp(anim.from, anim.to, t)
+    anim.current = elapsed / anim.duration
+    return true
+}
+
+fun <T> animCurrent(
+    anim: Anim,
+    from: T,
+    to: T,
+    lerp: (start: T, end: T, progress: Float) -> T,
+    easing: AnimationEasing = AnimationEasing.Linear,
+    reversed: Boolean = false
+): T {
+    val progress = if (reversed) {
+        1f - anim.current
+    } else {
+        anim.current
+    }
+    var t = easeFunctions[easing]?.invoke(progress) ?: progress
+    return lerp(from, to, t)
 }

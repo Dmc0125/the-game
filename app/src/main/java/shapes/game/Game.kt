@@ -16,13 +16,6 @@ const val PLAYGROUND_PADDING_FRACTION = 0.04f
 const val DRAG_SENSITIVITY = 1.75f
 const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
 
-const val CLEAR_DELAY = 0.2f
-const val CLEAR_GROWING_DURATION = 0.1f
-const val CLEAR_SHRINKING_DURATION = 0.3f
-
-const val CELL_CLEAR_DISAPPEAR_DELAY = 0.05f
-const val CELL_CLEAR_DISAPPEARING_DURATION = 0.3f
-
 const val DEFAULT_CELL_CLEAR_REWARD = 10
 
 object Color {
@@ -54,6 +47,11 @@ object Color {
     fun addAlpha(a: Int, rgb: Int): Int {
         return ((a and 0xff) shl 24) or (rgb and 0xffffff)
     }
+
+    fun a(argb: Int): Int = (argb shr 24) and 0xff
+    fun r(argb: Int): Int = (argb shr 16) and 0xff
+    fun g(argb: Int): Int = (argb shr 8) and 0xff
+    fun b(argb: Int): Int = argb and 0xff
 }
 
 val colors: Array<Int> = arrayOf(
@@ -644,139 +642,6 @@ fun ShapesBag.next(): Int {
     return c
 }
 
-enum class CellClearState {
-    None,
-    Growing,
-    Shrinking,
-    Disappearing,
-}
-
-data class Cell(val idx: Int) {
-    var color: Int = 0
-    var filled: Boolean = false
-    var filledAt = 0f
-    var clearState = CellClearState.None
-
-    private fun lerpColor(start: Int, end: Int, progress: Float): Int {
-        val a = (start shr 24) and 0xFF
-        val r = (start shr 16) and 0xFF
-        val g = (start shr 8) and 0xFF
-        val b = start and 0xFF
-
-        val targetA = (end shr 24) and 0xFF
-        val targetR = (end shr 16) and 0xFF
-        val targetG = (end shr 8) and 0xFF
-        val targetB = end and 0xFF
-
-        return Color.argb(
-            lerp(a, targetA, progress),
-            lerp(r, targetR, progress),
-            lerp(g, targetG, progress),
-            lerp(b, targetB, progress),
-        )
-    }
-
-    var disappearDelay = 0f
-    var disappearRotation = 0f
-    var disappearOffset = 0f
-
-    val chargeColorAnim = Animation(0, 0f, lerp = ::lerpColor)
-    val scaleAnim = Animation(1f, 0f, lerp = ::lerp)
-    val rotationAnim = Animation(0f, 0f, lerp = ::lerp, easing = AnimationEasing.EaseOutSquared)
-    val translateAnim = Animation(0f, 0f, lerp = ::lerp)
-}
-
-fun cellFill(cell: Cell, color: Int, elapsedTime: Float) {
-    cell.filled = true
-    cell.filledAt = elapsedTime
-    cell.color = color
-    cell.disappearRotation = 0f
-    cell.clearState = CellClearState.None
-}
-
-fun cellBeginClearingAnimation(cell: Cell, disappearDelay: Float, elapsedTime: Float) {
-    cell.clearState = CellClearState.Growing
-    cell.disappearDelay = disappearDelay
-
-    cell.chargeColorAnim.delay = 0f
-    cell.chargeColorAnim.current = cell.color
-    cell.chargeColorAnim.duration = CLEAR_GROWING_DURATION
-    cell.chargeColorAnim.easing = AnimationEasing.EaseInSquared
-    cell.chargeColorAnim.begin(elapsedTime, Color.white)
-
-    cell.scaleAnim.delay = 0f
-    cell.scaleAnim.current = 1f
-    cell.scaleAnim.duration = CLEAR_GROWING_DURATION
-    cell.scaleAnim.easing = AnimationEasing.EaseInSquared
-    cell.scaleAnim.begin(elapsedTime, 1.15f)
-}
-
-fun cellUpdateExplosion(cell: Cell, elapsedTime: Float): Boolean {
-    assert(cell.clearState != CellClearState.None) { "Clear animation is not active" }
-
-    var doneGrowing = false
-
-    if (cell.clearState == CellClearState.Growing) {
-        if (!cell.scaleAnim.animating && !cell.chargeColorAnim.animating) {
-            cell.clearState = CellClearState.Shrinking
-
-            cell.chargeColorAnim.delay = 0f
-            cell.chargeColorAnim.duration = CLEAR_SHRINKING_DURATION
-            cell.chargeColorAnim.easing = AnimationEasing.EaseOutSquared
-            cell.chargeColorAnim.begin(elapsedTime, cell.color)
-
-            cell.scaleAnim.delay = 0f
-            cell.scaleAnim.duration = CLEAR_SHRINKING_DURATION
-            cell.scaleAnim.easing = AnimationEasing.EaseOutSquared
-            cell.scaleAnim.begin(elapsedTime, 1f)
-
-            doneGrowing = true
-        }
-    }
-
-    if (cell.clearState == CellClearState.Shrinking) {
-        if (!cell.scaleAnim.animating && !cell.chargeColorAnim.animating) {
-            cell.clearState = CellClearState.Disappearing
-
-            val delay = 0.5f + cell.disappearDelay
-
-            cell.chargeColorAnim.delay = delay
-            cell.chargeColorAnim.duration = CELL_CLEAR_DISAPPEARING_DURATION
-            cell.chargeColorAnim.easing = AnimationEasing.EaseOutSquared
-            cell.chargeColorAnim.begin(elapsedTime, Color.addAlpha(0, cell.color))
-
-            cell.rotationAnim.current = 0f
-            cell.rotationAnim.delay = delay
-            cell.rotationAnim.duration = CELL_CLEAR_DISAPPEARING_DURATION
-            cell.rotationAnim.easing = AnimationEasing.EaseOutSquared
-            cell.rotationAnim.begin(elapsedTime, cell.disappearRotation)
-
-            cell.translateAnim.current = 0f
-            cell.translateAnim.delay = delay
-            cell.translateAnim.duration = CELL_CLEAR_DISAPPEARING_DURATION
-            cell.translateAnim.easing = AnimationEasing.EaseOutSquared
-            cell.translateAnim.begin(elapsedTime, cell.disappearOffset)
-
-            cell.scaleAnim.delay = delay
-            cell.scaleAnim.duration = CELL_CLEAR_DISAPPEARING_DURATION
-            cell.scaleAnim.easing = AnimationEasing.EaseOutSquared
-            cell.scaleAnim.begin(elapsedTime, 0.5f)
-        }
-    }
-
-    if (cell.clearState == CellClearState.Disappearing) {
-        if (!cell.scaleAnim.animating && !cell.rotationAnim.animating && !cell.chargeColorAnim.animating) {
-            cell.clearState = CellClearState.None
-        }
-    }
-
-    cell.chargeColorAnim.update(elapsedTime)
-    cell.scaleAnim.update(elapsedTime)
-    cell.rotationAnim.update(elapsedTime)
-    cell.translateAnim.update(elapsedTime)
-
-    return doneGrowing
-}
 
 class Announcer(
     val textSize: Float,
@@ -977,8 +842,223 @@ fun announcerRender(announcer: Announcer) {
     }
 }
 
+enum class LineClearPhase {
+    None,
+    PopGrow,
+    PopShrink,
+    FadeOut,
+}
+
+class LineClear(var row: Boolean) {
+    companion object {
+        const val LINE_POP_STAGGER = 0.2f
+        const val LINE_GROWING_DURATION = 0.1f
+        const val LINE_SHRINKING_DURATION = 0.3f
+
+        // max -> 12 cells, 11 * CELL_FADE_OUT_STAGGER = 0.55f
+        const val CELL_FADE_OUT_STAGGER = 0.05f
+        const val CELL_FADE_OUT_DURATION = 0.3f
+    }
+
+    class Cell {
+        var progress = Anim()
+        var endRotation = 0f
+        var endOffset = 0f
+    }
+
+    var cellAnchor = -1
+    var phase: LineClearPhase = LineClearPhase.None
+    var progress = Anim()
+    var popDelay = 0f
+    var fadeOutDelay = 0f
+    val cells = Array(CELLS_COUNT) { Cell() }
+}
+
+fun lineClearBegin(
+    lineClear: LineClear,
+    cellAnchor: Int,
+    popDelay: Float,
+    fadeOutDelay: Float,
+    elapsedTime: Float,
+) {
+    lineClear.phase = LineClearPhase.PopGrow
+    lineClear.popDelay = popDelay
+    lineClear.fadeOutDelay = fadeOutDelay
+    lineClear.cellAnchor = cellAnchor
+
+    animBegin(lineClear.progress, LineClear.LINE_GROWING_DURATION, elapsedTime, lineClear.popDelay)
+}
+
+fun lineClearUpdate(lineClear: LineClear, elapsedTime: Float) {
+    when (lineClear.phase) {
+        LineClearPhase.PopGrow -> {
+            if (!animUpdate(lineClear.progress, elapsedTime)) {
+                lineClear.phase = LineClearPhase.PopShrink
+                animBegin(lineClear.progress, LineClear.LINE_SHRINKING_DURATION, elapsedTime, 0f)
+            }
+        }
+
+        LineClearPhase.PopShrink -> {
+            if (!animUpdate(lineClear.progress, elapsedTime)) {
+                lineClear.phase = LineClearPhase.FadeOut
+
+                assert(lineClear.cellAnchor != -1)
+
+                fun cellBegin(cell: LineClear.Cell, endOffset: Float, endRotation: Float, delay: Float) {
+                    cell.endOffset = endOffset
+                    cell.endRotation = endRotation
+                    animBegin(cell.progress, LineClear.CELL_FADE_OUT_DURATION, elapsedTime, delay)
+                }
+
+                cellBegin(lineClear.cells[lineClear.cellAnchor], 0f, 0f, lineClear.fadeOutDelay)
+
+                var offset = 1
+                while (true) {
+                    val prevCellPos = lineClear.cellAnchor - offset
+                    val postCellPos = lineClear.cellAnchor + offset
+
+                    if (prevCellPos < 0 && postCellPos >= CELLS_COUNT) {
+                        break
+                    }
+
+                    val delay = offset.toFloat() * LineClear.CELL_FADE_OUT_STAGGER + lineClear.fadeOutDelay
+                    val endOffset = offset * 10f
+                    val endRotation = offset * 5f
+
+                    if (prevCellPos >= 0) {
+                        cellBegin(lineClear.cells[prevCellPos], endOffset * -1, endRotation * -1, delay)
+                    }
+                    if (postCellPos < CELLS_COUNT) {
+                        cellBegin(lineClear.cells[postCellPos], endOffset, endRotation, delay)
+                    }
+
+                    offset += 1
+                }
+            }
+        }
+
+        LineClearPhase.FadeOut -> {
+            var allDone = true
+
+            for (cell in lineClear.cells) {
+                if (animUpdate(cell.progress, elapsedTime)) {
+                    allDone = false
+                }
+            }
+
+            if (allDone) {
+                lineClear.phase = LineClearPhase.None
+            }
+        }
+
+        LineClearPhase.None -> Unit
+    }
+}
+
+fun lineClearRender(lineClear: LineClear, layout: Layout, lineCoord: Int, board: Board) {
+    fun cellIdx(cellCoord: Int, cellCoords: Coords): Int {
+        return if (lineClear.row) {
+            cellCoords.col = cellCoord
+            cellCoords.row = lineCoord
+
+            lineCoord * CELLS_COUNT + cellCoord
+        } else {
+            cellCoords.col = lineCoord
+            cellCoords.row = cellCoord
+
+            cellCoord * CELLS_COUNT + lineCoord
+        }
+    }
+
+    fun renderCell(cellCoords: Coords, scale: Float, rotation: Float, offset: Vec2, color: Int) {
+        val cellPos = coordsToPos(layout, cellCoords)
+        val cellCenter = cellPos + layout.cellSize / 2f
+
+        if (rotation != 0f) {
+            Platform.renderer.save()
+            Platform.renderer.translate(offset.x, offset.y)
+            Platform.renderer.rotate(rotation, cellCenter.x, cellCenter.y)
+        }
+
+        Platform.renderer.save()
+        Platform.renderer.scale(scale, scale, cellCenter.x, cellCenter.y)
+
+        val innerCellSize = layout.cellSize - layout.cellPadding * 2
+        Platform.renderer.drawRoundRect(
+            cellCenter.x - innerCellSize / 2f,
+            cellCenter.y - innerCellSize / 2f,
+            innerCellSize,
+            innerCellSize,
+            layout.cellRadius,
+            color
+        )
+
+        if (rotation != 0f) {
+            Platform.renderer.restore()
+        }
+
+        Platform.renderer.restore()
+    }
+
+    if (lineClear.phase == LineClearPhase.PopGrow || lineClear.phase == LineClearPhase.PopShrink) {
+        val reversed = lineClear.phase == LineClearPhase.PopShrink
+        val scale = animCurrent(
+            lineClear.progress,
+            1f, 1.15f,
+            ::lerp, AnimationEasing.EaseInSquared,
+            reversed,
+        )
+        val scratchCoords = Coords(0, 0)
+
+        for (cellCoord in 0..<CELLS_COUNT) {
+            val idx = cellIdx(cellCoord, scratchCoords)
+            val cell = board.cells[idx]
+            val color = animCurrent(
+                lineClear.progress,
+                cell.color, Color.white,
+                ::lerpColor, AnimationEasing.EaseInSquared,
+                reversed,
+            )
+            renderCell(scratchCoords, scale, 0f, Vec2(0f, 0f), color)
+        }
+    }
+
+    if (lineClear.phase == LineClearPhase.FadeOut) {
+        val scratchCoords = Coords(0, 0)
+
+        for ((cellCoord, cell) in lineClear.cells.withIndex()) {
+            val easing = AnimationEasing.EaseOutSquared
+
+            val scale = animCurrent(cell.progress, 1f, 0.5f, ::lerp, easing)
+            val alpha = animCurrent(cell.progress, 255, 0, ::lerp, easing)
+            val rotation = animCurrent(cell.progress, 0f, cell.endRotation, ::lerp, easing)
+
+            val offsetScalar = animCurrent(cell.progress, 0f, cell.endOffset, ::lerp, easing)
+            val offset = if (lineClear.row) {
+                Vec2(offsetScalar, 0f)
+            } else {
+                Vec2(0f, offsetScalar)
+            }
+
+            val idx = cellIdx(cellCoord, scratchCoords)
+            val cell = board.cells[idx]
+            val color = Color.addAlpha(alpha, cell.color)
+
+            renderCell(scratchCoords, scale, rotation, offset, color)
+        }
+    }
+}
+
+class Cell(val idx: Int) {
+    var color: Int = 0
+    var filled: Boolean = false
+    var filledAt = 0f
+}
+
 class Board {
     val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell(it) }
+    val rowsClears = Array(CELLS_COUNT) { LineClear(true) }
+    val colsClears = Array(CELLS_COUNT) { LineClear(false) }
 }
 
 fun boardPlaceShape(board: Board, currentShape: CurrentShape, elapsedTime: Float): Int {
@@ -988,7 +1068,9 @@ fun boardPlaceShape(board: Board, currentShape: CurrentShape, elapsedTime: Float
         val idx = coordsToIdx(cellCoords.col, cellCoords.row)
         val cell = board.cells[idx]
 
-        cellFill(cell, currentShape.color, elapsedTime)
+        cell.filled = true
+        cell.filledAt = elapsedTime
+        cell.color = currentShape.color
 
         count += 1
     }
@@ -996,214 +1078,167 @@ fun boardPlaceShape(board: Board, currentShape: CurrentShape, elapsedTime: Float
     return count
 }
 
-data class ClearResult(
-    val begin: Boolean,
-    val count: Int,
-    val firstCol: Int,
-    val firstRow: Int
-)
+fun boardClearFilledCells(board: Board, elapsedTime: Float): Boolean {
+    // detect filled
 
-fun boardClearFilledCells(board: Board, elapsedTime: Float): ClearResult {
-    data class Result(
-        val fixedCoord: Int,
-        var filled: Boolean = true,
-        var start: Int = -1,
-        var prevFillTime: Float = 0f,
-        val coordsToIdx: (fixedCoord: Int, movingCoord: Int) -> Int,
-    )
-
-    fun resultProcess(result: Result, movingCoord: Int) {
-        val idx = result.coordsToIdx(result.fixedCoord, movingCoord)
-        val cell = board.cells[idx]
-
-        if (!cell.filled) {
-            result.filled = false
-        }
-
-        if (result.prevFillTime < cell.filledAt) {
-            result.prevFillTime = cell.filledAt
-            result.start = movingCoord
-        }
-    }
-
-    fun resultBeginExplosion(result: Result, elapsedTime: Float, disappearDelay: Float) {
-        // first
-        run {
-            val idx = result.coordsToIdx(result.fixedCoord, result.start)
-            val cell = board.cells[idx]
-            cell.filled = false
-            cellBeginClearingAnimation(cell, disappearDelay, elapsedTime)
-        }
-
-        // delays
-
-        var offset = 1
-
-        while (true) {
-            val preCoord = result.start - offset
-            val postCoord = result.start + offset
-
-            if (preCoord < 0 && postCoord >= CELLS_COUNT) {
-                break
-            }
-
-            val cellDelay = offset * CELL_CLEAR_DISAPPEAR_DELAY + disappearDelay
-
-            if (preCoord >= 0) {
-                val endRotation = -20f - offset * 5f
-                val endOffset = -offset * 5f
-                val left = board.cells[result.coordsToIdx(result.fixedCoord, preCoord)]
-
-                left.filled = false
-                left.disappearRotation = endRotation
-                left.disappearOffset = endOffset
-
-                if (left.clearState == CellClearState.None) {
-                    cellBeginClearingAnimation(left, cellDelay, elapsedTime)
-                }
-            }
-
-            if (postCoord < CELLS_COUNT) {
-                val endRotation = 20f + offset * 5f
-                val endOffset = offset * 5f
-                val right = board.cells[result.coordsToIdx(result.fixedCoord, postCoord)]
-
-                right.filled = false
-                right.disappearRotation = endRotation
-                right.disappearOffset = endOffset
-
-                if (right.clearState == CellClearState.None) {
-                    cellBeginClearingAnimation(right, cellDelay, elapsedTime)
-                }
-            }
-
-            offset += 1
-        }
-    }
-
-    var animating = false
-    var scoreMultiplier = 1
-
-    var count = 0
-    var firstCol = -1
-    var firstRow = -1
-    var rowDelay = 0f
-    var colDelay = 0f
-
-    for (i in 0..<CELLS_COUNT) {
-        // row -> i = row, j = col
-        val rowResult = Result(i) { row, col ->
-            row * CELLS_COUNT + col
-        }
-        // col -> i = col, j = row
-        val colResult = Result(i) { col, row ->
-            row * CELLS_COUNT + col
-        }
-
-        for (j in 0..<CELLS_COUNT) {
-            if (!rowResult.filled && !colResult.filled) {
-                break
-            }
-
-            if (rowResult.filled) resultProcess(rowResult, j)
-            if (colResult.filled) resultProcess(colResult, j)
-        }
-
-        if (rowResult.filled) {
-            if (firstRow == -1) {
-                firstRow = i
-                firstCol = rowResult.start
-            }
-
-            animating = true
-            resultBeginExplosion(rowResult, elapsedTime, rowDelay)
-
-            count += 1
-            scoreMultiplier += 1
-            rowDelay += CLEAR_DELAY
-        }
-
-        if (colResult.filled) {
-            if (firstCol == -1) {
-                firstCol = i
-                firstRow = colResult.start
-            }
-
-            animating = true
-            resultBeginExplosion(colResult, elapsedTime, colDelay)
-
-            count += 1
-            scoreMultiplier += 1
-            colDelay += CLEAR_DELAY
-        }
-    }
-
-    return ClearResult(
-        animating,
-        count,
-        firstCol,
-        firstRow
-    )
-}
-
-fun boardUpdateClearingCells(board: Board, elapsedTime: Float): Pair<Int, Boolean> {
-    var allDone = true
-    var popCount = 0
-    val poppedCells = BooleanArray(CELLS_COUNT * CELLS_COUNT) { false }
-
-    // update cells and mark count popped rows
+    val filledRows = IntArray(CELLS_COUNT) { -1 }
+    val filledCols = IntArray(CELLS_COUNT) { -1 }
+    var linesCount = 0
 
     for (row in 0..<CELLS_COUNT) {
-        var rowPopped = true
+        var anchor = -1
+        var prevFilledAt = -1f
 
         for (col in 0..<CELLS_COUNT) {
             val idx = row * CELLS_COUNT + col
             val cell = board.cells[idx]
-
-            var cellPopped = false
-            if (cell.clearState != CellClearState.None) {
-                cellPopped = cellUpdateExplosion(cell, elapsedTime)
-                poppedCells[idx] = cellPopped
+            if (!cell.filled) {
+                anchor = -1
+                break
             }
 
-            if (!cellPopped) {
-                rowPopped = false
+            if (cell.filledAt > prevFilledAt) {
+                anchor = col
+                prevFilledAt = cell.filledAt
+            }
+        }
+
+        if (anchor > -1) {
+            filledRows[row] = anchor
+            linesCount += 1
+        }
+    }
+
+    for (col in 0..<CELLS_COUNT) {
+        var anchor = -1
+        var prevFilledAt = -1f
+
+        for (row in 0..<CELLS_COUNT) {
+            val idx = row * CELLS_COUNT + col
+            val cell = board.cells[idx]
+            if (!cell.filled) {
+                anchor = -1
+                break
             }
 
-            if (cell.clearState != CellClearState.None) {
+            if (cell.filledAt > prevFilledAt) {
+                anchor = row
+                prevFilledAt = cell.filledAt
+            }
+        }
+
+        if (anchor > -1) {
+            filledCols[col] = anchor
+            linesCount += 1
+        }
+    }
+
+    // begin pop
+
+    // time for line pop
+    // DELAY (0.2) + GROW (0.1) + SHRINK (0.3)
+
+    val totalPopDuration =
+        (linesCount - 1) * LineClear.LINE_POP_STAGGER +
+                linesCount * (LineClear.LINE_GROWING_DURATION + LineClear.LINE_SHRINKING_DURATION)
+    var popDelay = 0f
+    var fadeOutDelay = 0f
+    var animating = false
+    var rowIdx = 1
+
+    // rows
+    //
+    // Pop:
+    // 1st row = grow -> shrink
+    // 2nd row = wait for 1st row to finish -> grow -> shrink
+    // 3rd row = wait for 2nd row to finish -> grow -> shrink
+    //
+    // Fade out:
+    // 1st row = wait for 3rd row to finish shrink -> fade out
+    // 2nd row = wait for 3rd row to finish shrink -> wait LINE_POP_STAGGER -> fade out
+    // 3rd row = wait for 3rd row to finish shrink -> wait LINE_POP_STAGGER * 2 -> fade out
+
+    for ((row, anchorCol) in filledRows.withIndex()) {
+        if (anchorCol > -1) {
+            animating = true
+
+            val currentPopDuration =
+                (rowIdx - 1) * LineClear.LINE_POP_STAGGER +
+                        LineClear.LINE_GROWING_DURATION + LineClear.LINE_SHRINKING_DURATION
+            val fadeOutDelay = currentPopDuration + LineClear.LINE_POP_STAGGER
+
+            lineClearBegin(board.rowsClears[row], anchorCol, popDelay, fadeOutDelay, elapsedTime)
+
+            popDelay += LineClear.LINE_POP_STAGGER
+            rowIdx += 1
+
+            // clear cells
+            for (col in 0..<CELLS_COUNT) {
+                val idx = row * CELLS_COUNT + col
+                board.cells[idx].filled = false
+            }
+        }
+    }
+
+    // cols
+    var colIdx = rowIdx + 1
+
+    for ((col, anchorRow) in filledCols.withIndex()) {
+        if (anchorRow > -1) {
+            animating = true
+
+            val currentPopDuration =
+                (colIdx - 1) * LineClear.LINE_POP_STAGGER +
+                        LineClear.LINE_GROWING_DURATION + LineClear.LINE_SHRINKING_DURATION
+            val fadeOutDelay = currentPopDuration + LineClear.LINE_POP_STAGGER
+
+            lineClearBegin(board.colsClears[col], anchorRow, popDelay, fadeOutDelay, elapsedTime)
+
+            popDelay += LineClear.LINE_POP_STAGGER
+            colIdx += 1
+
+            // clear cells
+            for (row in 0..<CELLS_COUNT) {
+                val idx = row * CELLS_COUNT + col
+                board.cells[idx].filled = false
+            }
+        }
+    }
+
+    return animating
+}
+
+fun boardUpdateClearingCells(board: Board, elapsedTime: Float): Boolean {
+    var allDone = true
+
+    for (row in board.rowsClears) {
+        if (row.phase != LineClearPhase.None) {
+            lineClearUpdate(row, elapsedTime)
+
+            if (row.phase != LineClearPhase.None) {
                 allDone = false
             }
         }
-
-        if (rowPopped) {
-            popCount += 1
-        }
     }
 
-    // count popped columns
+    for (col in board.colsClears) {
+        if (col.phase != LineClearPhase.None) {
+            lineClearUpdate(col, elapsedTime)
 
-    for (col in 0..<CELLS_COUNT) {
-        var colPopped = true
-        for (row in 0..<CELLS_COUNT) {
-            val idx = row * CELLS_COUNT + col
-            if (!poppedCells[idx]) {
-                colPopped = false
-                break
+            if (col.phase != LineClearPhase.None) {
+                allDone = false
             }
         }
-        if (colPopped) {
-            popCount += 1
-        }
     }
 
-    return Pair(popCount, allDone)
+    return allDone
 }
 
 fun boardRender(board: Board, layout: Layout) {
     Platform.renderer.drawRoundRect(layout.pgRect, 24 * layout.pixelDensity, Color.ink)
 
     for ((cellIdx, cell) in board.cells.withIndex()) {
-        if (cell.filled && cell.clearState == CellClearState.None) {
+        if (cell.filled) {
             val col = (cellIdx % CELLS_COUNT).toFloat()
             val row = (cellIdx / CELLS_COUNT).toFloat()
 
@@ -1221,62 +1256,18 @@ fun boardRender(board: Board, layout: Layout) {
     }
 }
 
-fun boardRenderClearingCells(board: Board, layout: Layout) {
-    val scratchCoords = Coords(0, 0)
+fun boardRenderClearingAnimation(board: Board, layout: Layout) {
+    for (row in 0..<CELLS_COUNT) {
+        val rowLine = board.rowsClears[row]
+        if (rowLine.phase != LineClearPhase.None) {
+            lineClearRender(rowLine, layout, row, board)
+        }
+    }
 
-    for (idx in 0..<CELLS_COUNT * CELLS_COUNT) {
-        val cell = board.cells[idx]
-
-        if (cell.clearState != CellClearState.None) {
-            scratchCoords.col = idx % CELLS_COUNT
-            scratchCoords.row = idx / CELLS_COUNT
-
-            // cell center
-            var cellCenter = coordsToPos(layout, scratchCoords.toVec2())
-            cellCenter += layout.cellSize / 2
-
-            if (cell.rotationAnim.animating) {
-                val rotation = cell.rotationAnim.current
-                Platform.renderer.save()
-                Platform.renderer.rotate(rotation, cellCenter.x, cellCenter.y)
-            }
-
-            if (cell.translateAnim.animating) {
-                val offset = cell.translateAnim.current
-                Platform.renderer.save()
-                Platform.renderer.translate(offset, 0f)
-            }
-
-            // scaled
-            if (
-                cell.clearState == CellClearState.Growing ||
-                cell.clearState == CellClearState.Shrinking ||
-                cell.clearState == CellClearState.Disappearing
-            ) {
-                val scale = cell.scaleAnim.current
-
-                Platform.renderer.save()
-                Platform.renderer.scale(scale, scale, cellCenter.x, cellCenter.y)
-
-                val innerCellSize = layout.cellSize - layout.cellPadding * 2
-                val cellx = cellCenter.x - innerCellSize / 2
-                val celly = cellCenter.y - innerCellSize / 2
-                Platform.renderer.drawRoundRect(
-                    cellx, celly, innerCellSize, innerCellSize,
-                    layout.cellRadius,
-                    cell.chargeColorAnim.current,
-                )
-
-                Platform.renderer.restore()
-            }
-
-            if (cell.translateAnim.animating) {
-                Platform.renderer.restore()
-            }
-
-            if (cell.rotationAnim.animating) {
-                Platform.renderer.restore()
-            }
+    for (col in 0..<CELLS_COUNT) {
+        val colLine = board.colsClears[col]
+        if (colLine.phase != LineClearPhase.None) {
+            lineClearRender(colLine, layout, col, board)
         }
     }
 }
@@ -1374,20 +1365,23 @@ fun gamePlaceShapeAndClear(game: GameContext, forced: Boolean): Boolean {
     game.onPlaceShape?.invoke()
     game.currentShape.shape = -1
 
-    val result = boardClearFilledCells(game.board, game.elapsedTime)
-
-    if (result.begin) {
+    if (boardClearFilledCells(game.board, game.elapsedTime)) {
         game.state = GameState.ClearingAnimation
-        announcerAnnounce(
-            game.announcer,
-            "x${result.count}",
-            result.firstCol,
-            result.firstRow,
-            game.elapsedTime
-        )
+        return true
     }
 
-    return result.begin
+    // if (result.begin) {
+    //     game.state = GameState.ClearingAnimation
+    //     announcerAnnounce(
+    //         game.announcer,
+    //         "x${result.count}",
+    //         result.firstCol,
+    //         result.firstRow,
+    //         game.elapsedTime
+    //     )
+    // }
+
+    return false
 }
 
 fun gameForcePlaceShape(game: GameContext) {
@@ -1536,15 +1530,15 @@ fun gameUpdate(game: GameContext, touch: Touch) {
     // cells clearing animation and announcer
 
     if (game.state == GameState.ClearingAnimation) {
-        val (popCount, allDone) = boardUpdateClearingCells(game.board, game.elapsedTime)
+        val allDone = boardUpdateClearingCells(game.board, game.elapsedTime)
 
-        if (popCount > 0) {
-            val scoreReward = popCount * CELLS_COUNT * 10 * game.scoreMultiplier
-            game.scoreMultiplier += popCount
+        // if (popCount > 0) {
+        //     val scoreReward = popCount * CELLS_COUNT * 10 * game.scoreMultiplier
+        //     game.scoreMultiplier += popCount
 
-            // announcerAddScore(game.announcer, scoreReward, game.elapsedTime)
-            gameIncreaseScore(game, scoreReward)
-        }
+        //     // announcerAddScore(game.announcer, scoreReward, game.elapsedTime)
+        //     gameIncreaseScore(game, scoreReward)
+        // }
 
         announcerUpdate(game.announcer, game.layout, game.elapsedTime)
 
@@ -1563,7 +1557,7 @@ fun gameRender(game: GameContext) {
     }
 
     if (game.state == GameState.ClearingAnimation) {
-        boardRenderClearingCells(game.board, game.layout)
+        boardRenderClearingAnimation(game.board, game.layout)
     }
 
     if (game.state == GameState.Placing || game.state is GameState.AnimatingCurrentShape) {

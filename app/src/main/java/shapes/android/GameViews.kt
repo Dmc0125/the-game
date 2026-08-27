@@ -245,7 +245,7 @@ class GameView(
         cell.filled = true
         cell.color = colors[0]
         cell.filledAt = game.elapsedTime
-        cellBeginClearingAnimation(cell, 0f, game.elapsedTime)
+        // cellBeginClearingAnimation(cell, 0f, game.elapsedTime)
 
         game.state = GameState.ClearingAnimation
     }
