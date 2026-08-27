@@ -1138,13 +1138,14 @@ fun boardClearFilledCells(board: Board, elapsedTime: Float): Boolean {
     // time for line pop
     // DELAY (0.2) + GROW (0.1) + SHRINK (0.3)
 
-    val totalPopDuration =
-        (linesCount - 1) * LineClear.LINE_POP_STAGGER +
-                linesCount * (LineClear.LINE_GROWING_DURATION + LineClear.LINE_SHRINKING_DURATION)
-    var popDelay = 0f
-    var fadeOutDelay = 0f
+    fun fadeOutDelay(idx: Int): Float {
+        val delay = (linesCount - 1 - idx) * LineClear.LINE_POP_STAGGER
+        val stagger = idx * LineClear.LINE_POP_STAGGER
+        return delay + stagger
+    }
+
     var animating = false
-    var rowIdx = 1
+    var rowIdx = 0
 
     // rows
     //
@@ -1162,14 +1163,10 @@ fun boardClearFilledCells(board: Board, elapsedTime: Float): Boolean {
         if (anchorCol > -1) {
             animating = true
 
-            val currentPopDuration =
-                (rowIdx - 1) * LineClear.LINE_POP_STAGGER +
-                        LineClear.LINE_GROWING_DURATION + LineClear.LINE_SHRINKING_DURATION
-            val fadeOutDelay = currentPopDuration + LineClear.LINE_POP_STAGGER
-
+            val popDelay = rowIdx * LineClear.LINE_POP_STAGGER
+            val fadeOutDelay = fadeOutDelay(rowIdx)
             lineClearBegin(board.rowsClears[row], anchorCol, popDelay, fadeOutDelay, elapsedTime)
 
-            popDelay += LineClear.LINE_POP_STAGGER
             rowIdx += 1
 
             // clear cells
@@ -1181,20 +1178,16 @@ fun boardClearFilledCells(board: Board, elapsedTime: Float): Boolean {
     }
 
     // cols
-    var colIdx = rowIdx + 1
+    var colIdx = rowIdx
 
     for ((col, anchorRow) in filledCols.withIndex()) {
         if (anchorRow > -1) {
             animating = true
 
-            val currentPopDuration =
-                (colIdx - 1) * LineClear.LINE_POP_STAGGER +
-                        LineClear.LINE_GROWING_DURATION + LineClear.LINE_SHRINKING_DURATION
-            val fadeOutDelay = currentPopDuration + LineClear.LINE_POP_STAGGER
-
+            val popDelay = colIdx * LineClear.LINE_POP_STAGGER
+            val fadeOutDelay = fadeOutDelay(colIdx)
             lineClearBegin(board.colsClears[col], anchorRow, popDelay, fadeOutDelay, elapsedTime)
 
-            popDelay += LineClear.LINE_POP_STAGGER
             colIdx += 1
 
             // clear cells
@@ -1370,17 +1363,6 @@ fun gamePlaceShapeAndClear(game: GameContext, forced: Boolean): Boolean {
         return true
     }
 
-    // if (result.begin) {
-    //     game.state = GameState.ClearingAnimation
-    //     announcerAnnounce(
-    //         game.announcer,
-    //         "x${result.count}",
-    //         result.firstCol,
-    //         result.firstRow,
-    //         game.elapsedTime
-    //     )
-    // }
-
     return false
 }
 
@@ -1531,14 +1513,6 @@ fun gameUpdate(game: GameContext, touch: Touch) {
 
     if (game.state == GameState.ClearingAnimation) {
         val allDone = boardUpdateClearingCells(game.board, game.elapsedTime)
-
-        // if (popCount > 0) {
-        //     val scoreReward = popCount * CELLS_COUNT * 10 * game.scoreMultiplier
-        //     game.scoreMultiplier += popCount
-
-        //     // announcerAddScore(game.announcer, scoreReward, game.elapsedTime)
-        //     gameIncreaseScore(game, scoreReward)
-        // }
 
         announcerUpdate(game.announcer, game.layout, game.elapsedTime)
 
