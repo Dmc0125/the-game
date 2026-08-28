@@ -73,88 +73,6 @@ fun strokeText(text: String, x: Float, y: Float, strokeWidth: Float, color: Int,
     Platform.renderer.strokeText(text, x, y, strokeWidth, color, textSize, FontWeight.Regular, FONT_SUPPLY_CENTER)
 }
 
-fun generateShapeOffsets(base: Array<Coords>): Array<Array<Coords>> {
-    fun center(offsets: Array<Coords>): Array<Coords> {
-        // normalize
-        val normalized = offsets.map { it.copy() }.toTypedArray()
-        var minCol = Int.MAX_VALUE
-        var minRow = Int.MAX_VALUE
-        for (idx in normalized.indices) {
-            minCol = kotlin.math.min(minCol, normalized[idx].col)
-            minRow = kotlin.math.min(minRow, normalized[idx].row)
-        }
-
-        // center
-        var width = Int.MIN_VALUE
-        var height = Int.MIN_VALUE
-        for (idx in normalized.indices) {
-            normalized[idx].col -= minCol
-            normalized[idx].row -= minRow
-
-            width = kotlin.math.max(width, normalized[idx].col)
-            height = kotlin.math.max(height, normalized[idx].row)
-        }
-
-        val centerColOffset = (SHAPE_CELLS_COUNT - width) / 2
-        val centerRowOffset = (SHAPE_CELLS_COUNT - height) / 2
-        for (idx in normalized.indices) {
-            normalized[idx].col += centerColOffset
-            normalized[idx].row += centerRowOffset
-        }
-
-        return normalized
-    }
-
-    fun rotate(offsets: Array<Coords>): Array<Coords> {
-        val rotated = offsets.map { it.copy() }.toTypedArray()
-        for ((i, offset) in offsets.withIndex()) {
-            val (col, row) = offset
-            rotated[i].col = (SHAPE_CELLS_COUNT - 1) - row
-            rotated[i].row = col
-        }
-        return rotated
-    }
-
-    val r1 = center(base)
-    val r2 = rotate(r1)
-    val r3 = rotate(r2)
-    val r4 = rotate(r3)
-    return arrayOf(r1, r2, r3, r4)
-}
-
-val shapesMap: Array<Array<Coords>> = arrayOf(
-    // 1x1
-    *generateShapeOffsets(arrayOf(Coords(1, 1))),
-    // 1x2 horizontal domino
-    *generateShapeOffsets(arrayOf(Coords(1, 1), Coords(2, 1))),
-    // 2x2 square
-    *generateShapeOffsets(arrayOf(Coords(1, 1), Coords(2, 1), Coords(1, 2), Coords(2, 2))),
-    // 1x3 horizontal bar
-    *generateShapeOffsets(arrayOf(Coords(0, 1), Coords(1, 1), Coords(2, 1))),
-    // 2x2 L triomino
-    *generateShapeOffsets(arrayOf(Coords(1, 1), Coords(1, 2), Coords(2, 2))),
-    // 3x2 T tetromino
-    *generateShapeOffsets(arrayOf(Coords(0, 1), Coords(1, 1), Coords(2, 1), Coords(1, 2))),
-    // 1x4 horizontal bar
-    *generateShapeOffsets(arrayOf(Coords(0, 2), Coords(1, 2), Coords(2, 2), Coords(3, 2))),
-    // 3x2 L tetromino
-    *generateShapeOffsets(arrayOf(Coords(0, 0), Coords(0, 1), Coords(1, 1), Coords(2, 1))),
-    // 3x2 S tetromino
-    *generateShapeOffsets(arrayOf(Coords(1, 0), Coords(2, 0), Coords(0, 1), Coords(1, 1))),
-    // 3x3 T pentomino
-    *generateShapeOffsets(arrayOf(Coords(0, 0), Coords(1, 0), Coords(2, 0), Coords(1, 1), Coords(1, 2))),
-    // 3x3 U pentomino
-    *generateShapeOffsets(arrayOf(Coords(0, 0), Coords(2, 0), Coords(0, 1), Coords(1, 1), Coords(2, 1))),
-    // 3x3 W pentomino
-    *generateShapeOffsets(arrayOf(Coords(0, 0), Coords(0, 1), Coords(1, 1), Coords(1, 2), Coords(2, 2))),
-    // 4x3 staircase hexomino
-    *generateShapeOffsets(arrayOf(Coords(0, 0), Coords(1, 0), Coords(1, 1), Coords(2, 1), Coords(2, 2), Coords(3, 2))),
-)
-
-fun shapeRotationIndex(shapeIdx: Int, rotation: Int): Int {
-    return (shapeIdx * 4) + (rotation % 4)
-}
-
 data class Animation<T>(
     var current: T,
     var duration: Float,
@@ -248,11 +166,12 @@ fun countdownRender(countdown: Countdown) {
     )
 }
 
-class CurrentShape(var shape: Int = -1, val createdAt: Float = 0f) {
+class CurrentShape(var shape: Shape, val createdAt: Float = 0f) {
     companion object {
         val DEFAULT_COORDS = Coords(CELLS_COUNT / 2 - SHAPE_CELLS_COUNT / 2, CELLS_COUNT / 2 - SHAPE_CELLS_COUNT / 2)
     }
 
+    var initialized = false
     val color: Int = colors[Random.nextInt(colors.size)]
     var rotation: Int = 0
     var dragging: Boolean = false
@@ -274,8 +193,7 @@ class CurrentShape(var shape: Int = -1, val createdAt: Float = 0f) {
 
 fun currentShapeCells(currentShape: CurrentShape): Iterable<Coords> {
     return Iterable {
-        val shapeIdx = shapeRotationIndex(currentShape.shape, currentShape.rotation)
-        val cells = shapesMap[shapeIdx]
+        val cells = shapeOffsets(currentShape.shape, currentShape.rotation)
         var idx = 0
 
         object : Iterator<Coords> {
@@ -294,7 +212,7 @@ fun currentShapeCells(currentShape: CurrentShape): Iterable<Coords> {
 }
 
 fun currentShapeSpawn(
-    shapeIdx: Int,
+    newShape: Shape,
     board: Board,
     elapsedTime: Float,
 ): Pair<Boolean, CurrentShape> {
@@ -302,7 +220,8 @@ fun currentShapeSpawn(
 
     Platform.trace.beginSection("gameSpawnShape")
 
-    val newShape = CurrentShape(shapeIdx, elapsedTime)
+    val newShape = CurrentShape(newShape, elapsedTime)
+    newShape.initialized = true
 
     var availableCoords = currentShapeAvailableCoords(newShape, board.cells, 0)
     if (availableCoords == null) availableCoords =
@@ -323,13 +242,12 @@ fun currentShapeSpawn(
     return Pair(gameOver, newShape)
 }
 
-fun checkOverTheEdge(newPosCoords: Vec2, shapeIdx: Int): Vec2 {
+fun checkOverTheEdge(newPosCoords: Vec2, shapeOffsets: Array<Coords>): Vec2 {
     var minCol = Float.MAX_VALUE
     var maxCol = Float.MIN_VALUE
     var minRow = Float.MAX_VALUE
     var maxRow = Float.MIN_VALUE
 
-    val shapeOffsets = shapesMap[shapeIdx]
     for (cellOffsets in shapeOffsets) {
         val cellCoords = newPosCoords + cellOffsets.toVec2()
         minCol = kotlin.math.min(minCol, cellCoords.x)
@@ -357,8 +275,8 @@ fun currentShapeMove(currentShape: CurrentShape, newPos: Vec2, elapsedTime: Floa
 
 fun currentShapeProcessRotation(currentShape: CurrentShape, elapsedTime: Float, cells: Array<Cell>) {
     val newRotation = currentShape.rotation + 1
-    val newShapeIdx = shapeRotationIndex(currentShape.shape, newRotation)
-    val kicks = checkOverTheEdge(currentShape.posCoords, newShapeIdx)
+    val newShapeOffsets = shapeOffsets(currentShape.shape, newRotation)
+    val kicks = checkOverTheEdge(currentShape.posCoords, newShapeOffsets)
 
     if (kicks.x != 0f || kicks.y != 0f) {
         currentShapeMove(currentShape, currentShape.posCoords + kicks, elapsedTime)
@@ -387,8 +305,7 @@ fun currentShapeProcessMovement(
             val colsDiff = (diff / layout.cellSize) * DRAG_SENSITIVITY
             var newPosCoords = currentShape.posCoordsPrev + colsDiff
 
-            val shapeIdx = shapeRotationIndex(currentShape.shape, currentShape.rotation)
-            val kicks = checkOverTheEdge(newPosCoords, shapeIdx)
+            val kicks = checkOverTheEdge(newPosCoords, shapeOffsets(currentShape.shape, currentShape.rotation))
             newPosCoords += kicks
 
             currentShapeMove(currentShape, newPosCoords, elapsedTime)
@@ -415,8 +332,7 @@ fun currentShapeCheckOverlap(currentShape: CurrentShape, cells: Array<Cell>) {
 fun currentShapeAvailableCoords(currentShape: CurrentShape, cells: Array<Cell>, rot: Int = -1): Coords? {
     Platform.trace.beginSection("availableCoords")
 
-    val shapeIdx = shapeRotationIndex(currentShape.shape, if (rot == -1) currentShape.rotation else rot)
-    val shapeOffsets = shapesMap[shapeIdx]
+    val shapeOffsets = shapeOffsets(currentShape.shape, if (rot == -1) currentShape.rotation else rot)
 
     // coords represent shape grid top left position, which can be negative, since
     // the cells inside the shape grid are offsets from top left
@@ -495,7 +411,7 @@ fun currentShapeAvailableCoords(currentShape: CurrentShape, cells: Array<Cell>, 
         tryCoords.row += minCandidateRow
 
         var valid = true
-        for (cellOffset in shapesMap[shapeIdx]) {
+        for (cellOffset in shapeOffsets) {
             val tryCellCoords = tryCoords + cellOffset
             val idx = coordsToIdx(tryCellCoords.col, tryCellCoords.row)
             assert(idx >= 0 && idx < cells.size) // is guaranteed by enqueue
@@ -528,8 +444,7 @@ fun currentShapeAvailableCoords(currentShape: CurrentShape, cells: Array<Cell>, 
 
 fun currentShapeRender(currentShape: CurrentShape, layout: Layout) {
     fun renderShape(rot: Int = 0) {
-        val shapeIdx = shapeRotationIndex(currentShape.shape, rot)
-        val cells = shapesMap[shapeIdx]
+        val cells = shapeOffsets(currentShape.shape, rot)
 
         for (cellOffset in cells) {
             val clr = if (currentShape.overlapping) {
@@ -584,64 +499,6 @@ fun currentShapeRender(currentShape: CurrentShape, layout: Layout) {
         renderShape(currentShape.rotation)
     }
 }
-
-class ShapesBag {
-    var current = -1
-    val bagSize = shapesMap.size / 4
-    val indexes = IntArray(bagSize * 2)
-
-    init {
-        for (bag in 0..<2) {
-            for (i in 0..<bagSize) {
-                indexes[bag * bagSize + i] = i
-            }
-        }
-    }
-}
-
-fun IntArray.shuffleRange(from: Int, to: Int, random: Random = Random.Default) {
-    require(from in indices) { "from index out of bounds; from=$from, size=$size" }
-    require(to in from..size) { "to index out of bounds; to=$to, size=$size" }
-
-    for (i in to - 1 downTo from + 1) {
-        val j = random.nextInt(from, i + 1)
-        val temp = this[i]
-        this[i] = this[j]
-        this[j] = temp
-    }
-}
-
-fun ShapesBag.peek(): Int {
-    assert(current != -1) { "peek called before next" }
-    if (current == bagSize * 2) {
-        return indexes[0]
-    }
-    return indexes[current]
-}
-
-fun ShapesBag.next(): Int {
-    if (current == -1) {
-        // init
-        indexes.shuffleRange(0, bagSize)
-        indexes.shuffleRange(bagSize, bagSize * 2)
-        current = 0
-    }
-
-    if (current == bagSize) {
-        // shuffle first bag when we enter the second bag
-        indexes.shuffleRange(0, bagSize)
-    }
-    if (current == bagSize * 2) {
-        // shuffle second bag when we enter the first bag
-        indexes.shuffleRange(bagSize, bagSize * 2)
-        current = 0
-    }
-
-    val c = indexes[current]
-    current += 1
-    return c
-}
-
 
 class Announcer(
     val textSize: Float,
@@ -1347,7 +1204,7 @@ sealed interface GameState {
 typealias onMultiplierChange = (change: Int) -> Unit
 typealias onScoreChange = (change: Int) -> Unit
 typealias onPlaceShape = () -> Unit
-typealias onRoundStart = (shapeIdx: Int, roundDuration: Float) -> Unit
+typealias onRoundStart = (shape: Shape, roundDuration: Float) -> Unit
 typealias onGameOver = () -> Unit
 
 class GameContext(
@@ -1374,7 +1231,7 @@ class GameContext(
     var state: GameState = GameState.Countdown
     val board = Board()
     val shapesBag = ShapesBag()
-    var currentShape = CurrentShape()
+    var currentShape = CurrentShape(Shape())
     val countdown = Countdown(30f * scaledDensity, 60f * scaledDensity)
     val announcer = Announcer(48f * scaledDensity, 1f * scaledDensity, scaledDensity)
 
@@ -1401,7 +1258,7 @@ fun gamePlaceShapeAndClear(game: GameContext, forced: Boolean): Int {
 
     game.shapesPlaced += 1
     game.onPlaceShape?.invoke()
-    game.currentShape.shape = -1
+    game.currentShape.initialized = false
 
     return boardClearFilledCells(game.board, game.elapsedTime)
 }
@@ -1480,9 +1337,9 @@ fun gameUpdate(game: GameContext, touch: Touch) {
 
     when (val gs = game.state) {
         GameState.Placing -> {
-            if (game.currentShape.shape == -1) {
-                val shapeIdx = game.shapesBag.next()
-                val (gameOver, newShape) = currentShapeSpawn(shapeIdx, game.board, game.elapsedTime)
+            if (!game.currentShape.initialized) {
+                val shape = shapesBagNext(game.shapesBag)
+                val (gameOver, newShape) = currentShapeSpawn(shape, game.board, game.elapsedTime)
 
                 if (gameOver) {
                     game.onGameOver?.invoke()
@@ -1492,9 +1349,9 @@ fun gameUpdate(game: GameContext, touch: Touch) {
 
                 game.currentShape = newShape
 
-                val nextShapeIdx = game.shapesBag.peek()
+                val nextShape = shapesBagPeek(game.shapesBag)
                 game.roundDuration = currentRoundDuration(game.shapesPlaced)
-                game.onRoundStart?.invoke(nextShapeIdx, game.roundDuration)
+                game.onRoundStart?.invoke(nextShape, game.roundDuration)
 
                 game.pendingRotation = false
                 game.pendingPlacement = false
@@ -1601,7 +1458,6 @@ fun gameUpdate(game: GameContext, touch: Touch) {
         if (result.cellsFadedOut > 0) {
             val updates = kotlin.math.min(result.cellsFadedOut, game.queuedScoreUpdates)
             val totalChange = updates * CELL_CLEAR_REWARD * game.scoreMultiplier
-            println("mult ${game.scoreMultiplier}, updates ${updates}, totalChange ${totalChange}")
             game.onScoreChange?.invoke(totalChange)
             game.queuedScoreUpdates -= updates
         }
@@ -1627,8 +1483,7 @@ fun gameRender(game: GameContext) {
     }
 
     if (game.state == GameState.Placing || game.state is GameState.AnimatingCurrentShape) {
-        assert(game.currentShape.shape < shapesMap.size)
-        if (game.currentShape.shape != -1) {
+        if (game.currentShape.initialized) {
             currentShapeRender(game.currentShape, game.layout)
         }
     }

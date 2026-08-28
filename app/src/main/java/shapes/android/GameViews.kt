@@ -284,7 +284,7 @@ class GameView(
     }
 
     fun debugSpawnShape() {
-        game.currentShape = CurrentShape(0)
+        game.currentShape = CurrentShape(Shape())
         game.state = GameState.Placing
     }
 
@@ -386,7 +386,7 @@ class NextShapeView(context: Context) : View(context) {
 
     val paint = Paint()
     var cellSize = 0f
-    var shape: Array<Coords>? = null
+    var shapeCoords: Array<Coords>? = null
 
     var minCol = Int.MAX_VALUE
     var minRow = Int.MAX_VALUE
@@ -404,19 +404,19 @@ class NextShapeView(context: Context) : View(context) {
         innerRect = Rect(padding, padding, rect.width - padding, rect.height - padding)
     }
 
-    fun onNextShape(shapeIdx: Int) {
-        shape = shapesMap[shapeRotationIndex(shapeIdx, 0)]
+    fun onNextShape(shape: Shape) {
+        shapeCoords = shapeOffsets(shape, 0)
     }
 
     fun update() {
-        if (shape == null) return
+        val sc = shapeCoords ?: return
 
         minCol = Int.MAX_VALUE
         var maxCol = Int.MIN_VALUE
         minRow = Int.MAX_VALUE
         var maxRow = Int.MIN_VALUE
 
-        for (cell in shape) {
+        for (cell in sc) {
             minCol = kotlin.math.min(minCol, cell.col)
             maxCol = kotlin.math.max(maxCol, cell.col)
             minRow = kotlin.math.min(minRow, cell.row)
@@ -437,31 +437,31 @@ class NextShapeView(context: Context) : View(context) {
     }
 
     fun render(canvas: Canvas) {
-        if (shape != null) {
-            paint.reset()
-            paint.color = colors[0]
+        val sc = shapeCoords ?: return
 
-            val left = innerRect.x + (innerRect.width - totalWidth) / 2f
-            val top = innerRect.y + (innerRect.height - totalHeight) / 2f
+        paint.reset()
+        paint.color = colors[0]
 
-            for (cell in shape) {
-                val (col, row) = cell
+        val left = innerRect.x + (innerRect.width - totalWidth) / 2f
+        val top = innerRect.y + (innerRect.height - totalHeight) / 2f
 
-                var x = left + (col - minCol) * cellSize
-                var y = top + (row - minRow) * cellSize
+        for (cell in sc) {
+            val (col, row) = cell
 
-                val padding = cellSize * 0.05f
-                val radius = cellSize * CELL_RADIUS_FRACTION
+            var x = left + (col - minCol) * cellSize
+            var y = top + (row - minRow) * cellSize
 
-                canvas.drawRoundRect(
-                    x + padding,
-                    y + padding,
-                    x + cellSize - padding,
-                    y + cellSize - padding,
-                    radius, radius,
-                    paint,
-                )
-            }
+            val padding = cellSize * 0.05f
+            val radius = cellSize * CELL_RADIUS_FRACTION
+
+            canvas.drawRoundRect(
+                x + padding,
+                y + padding,
+                x + cellSize - padding,
+                y + cellSize - padding,
+                radius, radius,
+                paint,
+            )
         }
     }
 
