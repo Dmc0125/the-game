@@ -7,6 +7,7 @@ import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
 import android.util.Log
+import android.view.Choreographer
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.text.font.FontFamily
 import jdk.internal.icu.util.CodePointTrie
@@ -302,13 +303,39 @@ class GameView(
         game.changedHeight = h.toFloat()
     }
 
+    private val frameCallback = object : Choreographer.FrameCallback {
+        override fun doFrame(currentTime: Long) {
+            if (!running) return
+
+            val delaTimeNanos = (currentTime - lastFrameTime)
+            val deltaTime = delaTimeNanos / 1e9f
+            lastFrameTime = currentTime
+
+            game.dt = deltaTime
+            game.elapsedTime += deltaTime
+
+            val updateStartNs = System.nanoTime()
+            gameUpdate(game, touch)
+            val updateElapsedSeconds = System.nanoTime() - updateStartNs
+
+            postInvalidate()
+            Choreographer.getInstance().postFrameCallback(this)
+        }
+    }
+
     fun resume() {
+        if (running) return
+
         running = true
         lastFrameTime = System.nanoTime()
+        Choreographer.getInstance().postFrameCallback(frameCallback)
     }
 
     fun pause() {
+        if (!running) return
+
         running = false
+        Choreographer.getInstance().removeFrameCallback(frameCallback)
     }
 
     fun handleShapeRotate() {
@@ -350,28 +377,9 @@ class GameView(
         renderer.canvas = canvas
         Platform.withRenderer(renderer)
 
-        val currentTime = System.nanoTime()
-        val delaTimeNanos = (currentTime - lastFrameTime)
-        val deltaTime = delaTimeNanos / 1e9f
-        lastFrameTime = currentTime
-
-        game.dt = deltaTime
-        game.elapsedTime += deltaTime
-
-        val updateStartNs = System.nanoTime()
-        gameUpdate(game, touch)
-        val updateElapsedSeconds = System.nanoTime() - updateStartNs
-
         val renderStartNs = System.nanoTime()
         gameRender(game)
         val renderElapsedSeconds = System.nanoTime() - renderStartNs
-
-        metrics.record(
-            delaTimeNanos,
-            updateElapsedSeconds,
-            renderElapsedSeconds,
-        )
-        metrics.log()
 
         postInvalidateOnAnimation()
     }
