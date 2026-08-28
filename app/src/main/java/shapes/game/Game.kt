@@ -16,7 +16,7 @@ const val PLAYGROUND_PADDING_FRACTION = 0.04f
 const val DRAG_SENSITIVITY = 1.75f
 const val SHAPE_MOVEMENT_ANIMATION_DURATION = 0.065f
 
-const val DEFAULT_CELL_CLEAR_REWARD = 10
+const val CELL_CLEAR_REWARD = 10
 
 object Color {
     const val black = 0xff000000.toInt()
@@ -889,12 +889,20 @@ fun lineClearBegin(
     animBegin(lineClear.progress, LineClear.LINE_GROWING_DURATION, elapsedTime, lineClear.popDelay)
 }
 
-fun lineClearUpdate(lineClear: LineClear, elapsedTime: Float) {
+data class LineClearUpdateResult(
+    var popped: Boolean,
+    var cellsFadedOut: Int,
+)
+
+fun lineClearUpdate(lineClear: LineClear, elapsedTime: Float): LineClearUpdateResult {
+    val result = LineClearUpdateResult(popped = false, cellsFadedOut = 0)
+
     when (lineClear.phase) {
         LineClearPhase.PopGrow -> {
             if (!animUpdate(lineClear.progress, elapsedTime)) {
                 lineClear.phase = LineClearPhase.PopShrink
                 animBegin(lineClear.progress, LineClear.LINE_SHRINKING_DURATION, elapsedTime, 0f)
+                result.popped = true
             }
         }
 
@@ -911,6 +919,7 @@ fun lineClearUpdate(lineClear: LineClear, elapsedTime: Float) {
                 }
 
                 cellBegin(lineClear.cells[lineClear.cellAnchor], 0f, 0f, lineClear.fadeOutDelay)
+                result.cellsFadedOut += 1
 
                 var offset = 1
                 while (true) {
@@ -941,8 +950,18 @@ fun lineClearUpdate(lineClear: LineClear, elapsedTime: Float) {
             var allDone = true
 
             for (cell in lineClear.cells) {
+                if (!cell.progress.running) {
+                    continue
+                }
+
+                val preInDelay = cell.progress.state == AnimState.Delay
+
                 if (animUpdate(cell.progress, elapsedTime)) {
                     allDone = false
+                    val postInDelay = cell.progress.state == AnimState.Delay
+                    if (preInDelay && !postInDelay) {
+                        result.cellsFadedOut += 1
+                    }
                 }
             }
 
@@ -953,6 +972,8 @@ fun lineClearUpdate(lineClear: LineClear, elapsedTime: Float) {
 
         LineClearPhase.None -> Unit
     }
+
+    return result
 }
 
 fun lineClearRender(lineClear: LineClear, layout: Layout, lineCoord: Int, board: Board) {
@@ -1078,7 +1099,7 @@ fun boardPlaceShape(board: Board, currentShape: CurrentShape, elapsedTime: Float
     return count
 }
 
-fun boardClearFilledCells(board: Board, elapsedTime: Float): Boolean {
+fun boardClearFilledCells(board: Board, elapsedTime: Float): Int {
     // detect filled
 
     val filledRows = IntArray(CELLS_COUNT) { -1 }
@@ -1198,33 +1219,53 @@ fun boardClearFilledCells(board: Board, elapsedTime: Float): Boolean {
         }
     }
 
-    return animating
+    return linesCount
 }
 
-fun boardUpdateClearingCells(board: Board, elapsedTime: Float): Boolean {
-    var allDone = true
+data class BoardUpdateResult(
+    var allDone: Boolean,
+    var linePopped: Boolean,
+    var cellsFadedOut: Int,
+)
+
+fun boardUpdateClearingCells(board: Board, elapsedTime: Float): BoardUpdateResult {
+    val result = BoardUpdateResult(
+        allDone = true,
+        linePopped = false,
+        cellsFadedOut = 0,
+    )
 
     for (row in board.rowsClears) {
         if (row.phase != LineClearPhase.None) {
-            lineClearUpdate(row, elapsedTime)
-
+            val lineResult = lineClearUpdate(row, elapsedTime)
+            if (!result.linePopped) {
+                result.linePopped = lineResult.popped
+            }
+            if (lineResult.cellsFadedOut > 0) {
+                result.cellsFadedOut += lineResult.cellsFadedOut
+            }
             if (row.phase != LineClearPhase.None) {
-                allDone = false
+                result.allDone = false
             }
         }
     }
 
     for (col in board.colsClears) {
         if (col.phase != LineClearPhase.None) {
-            lineClearUpdate(col, elapsedTime)
-
+            val lineResult = lineClearUpdate(col, elapsedTime)
+            if (!result.linePopped) {
+                result.linePopped = lineResult.popped
+            }
+            if (lineResult.cellsFadedOut > 0) {
+                result.cellsFadedOut += lineResult.cellsFadedOut
+            }
             if (col.phase != LineClearPhase.None) {
-                allDone = false
+                result.allDone = false
             }
         }
     }
 
-    return allDone
+    return result
 }
 
 fun boardRender(board: Board, layout: Layout) {
@@ -1297,12 +1338,14 @@ fun coordsToPos(layout: Layout, coords: Vec2): Vec2 {
 sealed interface GameState {
     data object Countdown : GameState
     data object Placing : GameState
+    data class PlayerTurnEnd(val linesCleared: Int) : GameState
     data class AnimatingCurrentShape(val forced: Boolean) : GameState
     data object ClearingAnimation : GameState
     data object GameOver : GameState
 }
 
-typealias onScoreChange = (Int) -> Unit
+typealias onMultiplierChange = (change: Int) -> Unit
+typealias onScoreChange = (change: Int) -> Unit
 typealias onPlaceShape = () -> Unit
 typealias onRoundStart = (shapeIdx: Int, roundDuration: Float) -> Unit
 typealias onGameOver = () -> Unit
@@ -1310,6 +1353,7 @@ typealias onGameOver = () -> Unit
 class GameContext(
     val pixelDensity: Float,
     val scaledDensity: Float,
+    val onMultiplierChange: onMultiplierChange? = null,
     val onScoreChange: onScoreChange? = null,
     val onPlaceShape: onPlaceShape? = null,
     val onRoundStart: onRoundStart? = null,
@@ -1336,45 +1380,41 @@ class GameContext(
 
     var shapesPlaced = 0
     var roundDuration = 5f
+
+    var clearStreak = 0
+    var noClearStreak = 0
     var scoreMultiplier = 1
     var score = 0
+    var queuedScoreMultiplierUpdates = 0
+    var queuedScoreUpdates = 0
 }
 
-fun gameIncreaseScore(game: GameContext, amount: Int) {
-    game.score += amount
-    game.onScoreChange?.invoke(game.score)
-}
-
-fun gamePlaceShapeAndClear(game: GameContext, forced: Boolean): Boolean {
+fun gamePlaceShapeAndClear(game: GameContext, forced: Boolean): Int {
     var cellCount = boardPlaceShape(game.board, game.currentShape, game.elapsedTime)
-
-    if (forced) {
-        cellCount *= -10
+    val scoreChange = if (forced) {
+        cellCount * -10
+    } else {
+        cellCount * game.scoreMultiplier
     }
-
-    gameIncreaseScore(game, cellCount)
+    game.score += scoreChange
+    game.onScoreChange?.invoke(scoreChange)
 
     game.shapesPlaced += 1
     game.onPlaceShape?.invoke()
     game.currentShape.shape = -1
 
-    if (boardClearFilledCells(game.board, game.elapsedTime)) {
-        game.state = GameState.ClearingAnimation
-        return true
-    }
-
-    return false
+    return boardClearFilledCells(game.board, game.elapsedTime)
 }
 
-fun gameForcePlaceShape(game: GameContext) {
+fun gameForcePlaceShape(game: GameContext): GameState {
     Platform.trace.beginSection("forcePlace")
 
     val availableCoords = currentShapeAvailableCoords(game.currentShape, game.board.cells)
     if (availableCoords == null) {
-        game.onGameOver?.invoke()
-        game.state = GameState.GameOver
+        // game.onGameOver?.invoke()
+        // game.state = GameState.GameOver
         Platform.trace.endSection()
-        return
+        return GameState.GameOver
     }
 
     Platform.trace.endSection()
@@ -1388,9 +1428,10 @@ fun gameForcePlaceShape(game: GameContext) {
     }
 
     if (!game.currentShape.projectionAnim.animating) {
-        gamePlaceShapeAndClear(game, forced)
+        val linesCleared = gamePlaceShapeAndClear(game, forced)
+        return GameState.PlayerTurnEnd(linesCleared)
     } else {
-        game.state = GameState.AnimatingCurrentShape(true)
+        return GameState.AnimatingCurrentShape(true)
     }
 }
 
@@ -1423,11 +1464,9 @@ fun gameUpdate(game: GameContext, touch: Touch) {
     }
 
 
-    val gameState = game.state
-
     // countdown - independent
 
-    if (gameState == GameState.Countdown) {
+    if (game.state == GameState.Countdown) {
         if (shapes.BuildConfig.DEBUG) {
             game.state = GameState.Placing
         } else {
@@ -1439,84 +1478,137 @@ fun gameUpdate(game: GameContext, touch: Touch) {
 
     // current shape
 
-    if (gameState == GameState.Placing) {
-        if (game.currentShape.shape == -1) {
-            val shapeIdx = game.shapesBag.next()
-            val (gameOver, newShape) = currentShapeSpawn(shapeIdx, game.board, game.elapsedTime)
+    when (val gs = game.state) {
+        GameState.Placing -> {
+            if (game.currentShape.shape == -1) {
+                val shapeIdx = game.shapesBag.next()
+                val (gameOver, newShape) = currentShapeSpawn(shapeIdx, game.board, game.elapsedTime)
 
-            if (gameOver) {
-                game.onGameOver?.invoke()
-                game.state = GameState.GameOver
-                return
-            }
+                if (gameOver) {
+                    game.onGameOver?.invoke()
+                    game.state = GameState.GameOver
+                    return
+                }
 
-            game.currentShape = newShape
+                game.currentShape = newShape
 
-            val nextShapeIdx = game.shapesBag.peek()
-            game.roundDuration = currentRoundDuration(game.shapesPlaced)
-            game.onRoundStart?.invoke(nextShapeIdx, game.roundDuration)
+                val nextShapeIdx = game.shapesBag.peek()
+                game.roundDuration = currentRoundDuration(game.shapesPlaced)
+                game.onRoundStart?.invoke(nextShapeIdx, game.roundDuration)
 
-            game.pendingRotation = false
-            game.pendingPlacement = false
-        } else {
-            if (game.currentShape.createdAt + game.roundDuration < game.elapsedTime) {
-                gameForcePlaceShape(game)
-
-                // possible round end
+                game.pendingRotation = false
+                game.pendingPlacement = false
             } else {
-                // process inputs
-
-                if (game.pendingRotation) {
-                    currentShapeProcessRotation(game.currentShape, game.elapsedTime, game.board.cells)
-                    game.pendingRotation = false
-                }
-
-                var placed = false
-                if (game.pendingPlacement) {
-                    if (!game.currentShape.overlapping) {
-                        if (!game.currentShape.projectionAnim.animating) {
-                            gamePlaceShapeAndClear(game, false)
-
-                            // possible round end
-                        } else {
-                            game.state = GameState.AnimatingCurrentShape(false)
-                        }
-
-                        placed = true
+                if (game.currentShape.createdAt + game.roundDuration < game.elapsedTime) {
+                    val gs = gameForcePlaceShape(game)
+                    if (gs == GameState.GameOver) {
+                        game.onGameOver?.invoke()
                     }
-                    game.pendingPlacement = false
-                }
+                    game.state = gs
+                } else {
+                    // process inputs
 
-                if (!placed) {
-                    currentShapeProcessMovement(
-                        game.currentShape,
-                        game.layout,
-                        touch,
-                        game.elapsedTime,
-                        game.board.cells,
-                    )
+                    if (game.pendingRotation) {
+                        currentShapeProcessRotation(game.currentShape, game.elapsedTime, game.board.cells)
+                        game.pendingRotation = false
+                    }
+
+                    var placed = false
+                    if (game.pendingPlacement) {
+                        if (!game.currentShape.overlapping) {
+                            if (!game.currentShape.projectionAnim.animating) {
+                                val linesCleared = gamePlaceShapeAndClear(game, false)
+                                game.state = GameState.PlayerTurnEnd(linesCleared)
+                            } else {
+                                game.state = GameState.AnimatingCurrentShape(false)
+                            }
+
+                            placed = true
+                        }
+                        game.pendingPlacement = false
+                    }
+
+                    if (!placed) {
+                        currentShapeProcessMovement(
+                            game.currentShape,
+                            game.layout,
+                            touch,
+                            game.elapsedTime,
+                            game.board.cells,
+                        )
+                    }
                 }
             }
         }
-    } else if (gameState is GameState.AnimatingCurrentShape) {
-        // shape dragging
-        game.currentShape.projectionAnim.update(game.elapsedTime)
 
-        if (!game.currentShape.projectionAnim.animating) {
-            if (!gamePlaceShapeAndClear(game, gameState.forced)) {
+        is GameState.AnimatingCurrentShape -> {
+            // shape dragging
+            game.currentShape.projectionAnim.update(game.elapsedTime)
+
+            if (!game.currentShape.projectionAnim.animating) {
+                val linesCleared = gamePlaceShapeAndClear(game, gs.forced)
+                game.state = GameState.PlayerTurnEnd(linesCleared)
+            }
+        }
+
+        else -> Unit
+    }
+
+    // turn end
+
+    when (val gs = game.state) {
+        is GameState.PlayerTurnEnd -> {
+            if (gs.linesCleared > 0) {
+                game.noClearStreak = 0
+
+                if (gs.linesCleared > 1 || game.clearStreak > 0) {
+                    game.scoreMultiplier += gs.linesCleared
+                    game.queuedScoreMultiplierUpdates += gs.linesCleared
+                }
+
+                val scoreUpdates = gs.linesCleared * CELLS_COUNT
+                val scoreChange = scoreUpdates * CELL_CLEAR_REWARD * game.scoreMultiplier
+                game.queuedScoreUpdates += scoreUpdates
+                game.score += scoreChange
+                game.clearStreak += 1
+
+                game.state = GameState.ClearingAnimation
+            } else {
+                if (game.noClearStreak >= 5 && game.scoreMultiplier > 1) {
+                    game.scoreMultiplier -= 1
+                    game.onMultiplierChange?.invoke(-1)
+                }
+
+                game.clearStreak = 0
+                game.noClearStreak += 1
                 game.state = GameState.Placing
             }
         }
+
+        else -> Unit
     }
 
     // cells clearing animation and announcer
 
     if (game.state == GameState.ClearingAnimation) {
-        val allDone = boardUpdateClearingCells(game.board, game.elapsedTime)
+        val result = boardUpdateClearingCells(game.board, game.elapsedTime)
 
-        announcerUpdate(game.announcer, game.layout, game.elapsedTime)
+        if (result.linePopped && game.queuedScoreMultiplierUpdates > 0) {
+            game.onMultiplierChange?.invoke(1)
+            game.queuedScoreMultiplierUpdates -= 1
+        }
 
-        if (allDone && game.announcer.state == Announcer.State.None) {
+        if (result.cellsFadedOut > 0) {
+            val updates = kotlin.math.min(result.cellsFadedOut, game.queuedScoreUpdates)
+            val totalChange = updates * CELL_CLEAR_REWARD * game.scoreMultiplier
+            println("mult ${game.scoreMultiplier}, updates ${updates}, totalChange ${totalChange}")
+            game.onScoreChange?.invoke(totalChange)
+            game.queuedScoreUpdates -= updates
+        }
+
+        // announcerUpdate(game.announcer, game.layout, game.elapsedTime)
+
+        if (result.allDone && game.announcer.state == Announcer.State.None) {
             // round end
             game.state = GameState.Placing
         }

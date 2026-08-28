@@ -45,7 +45,14 @@ val easeFunctions = mapOf(
     AnimationEasing.EaseOutCubic to ::easeOutCubic,
 )
 
+enum class AnimState {
+    None,
+    Delay,
+    Running,
+}
+
 class Anim {
+    var state = AnimState.None
     var running = false
     var startTime = 0f
     var duration = 0f
@@ -59,6 +66,12 @@ fun animBegin(anim: Anim, duration: Float, elapsedTime: Float, delay: Float = 0f
     anim.duration = duration
     anim.delay = delay
     anim.current = 0f
+
+    if (delay > 0f) {
+        anim.state = AnimState.Delay
+    } else {
+        anim.state = AnimState.Running
+    }
 }
 
 fun animUpdate(anim: Anim, elapsedTime: Float): Boolean {
@@ -68,6 +81,7 @@ fun animUpdate(anim: Anim, elapsedTime: Float): Boolean {
 
     var elapsed = elapsedTime - anim.startTime
     if (elapsed < anim.delay) {
+        anim.state = AnimState.Delay
         return true
     }
 
@@ -75,9 +89,11 @@ fun animUpdate(anim: Anim, elapsedTime: Float): Boolean {
     if (elapsed >= anim.duration) {
         anim.current = 1f
         anim.running = false
+        anim.state = AnimState.None
         return false
     }
 
+    anim.state = AnimState.Running
     anim.current = elapsed / anim.duration
     return true
 }

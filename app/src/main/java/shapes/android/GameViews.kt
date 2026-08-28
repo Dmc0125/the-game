@@ -215,6 +215,7 @@ fun Metrics.log() {
 
 class GameView(
     context: Context,
+    onMultiplierChange: onMultiplierChange? = null,
     onScoreChange: onScoreChange? = null,
     onPlaceShape: onPlaceShape? = null,
     onRoundStart: onRoundStart? = null,
@@ -225,6 +226,7 @@ class GameView(
     val game = GameContext(
         context.resources.displayMetrics.density,
         context.resources.displayMetrics.scaledDensity,
+        onMultiplierChange,
         onScoreChange,
         onPlaceShape,
         onRoundStart,
