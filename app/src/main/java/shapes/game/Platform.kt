@@ -1,6 +1,14 @@
 package shapes.game
 
+enum class TouchAction {
+    None,
+    Down,
+    Move,
+    Up,
+}
+
 data class Touch(
+    var action: TouchAction = TouchAction.None,
     var isDown: Boolean = false,
     var position: Vec2 = Vec2(0f, 0f),
     var startPosition: Vec2 = Vec2(0f, 0f),

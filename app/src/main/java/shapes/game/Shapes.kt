@@ -2,47 +2,81 @@ package shapes.game
 
 import kotlin.random.Random
 
-fun newShape(base: Array<Coords>): Array<Array<Coords>> {
-    fun rotate(offsets: Array<Coords>): Array<Coords> {
-        val rotated = offsets.map { it.copy() }.toTypedArray()
-        for ((i, offset) in offsets.withIndex()) {
-            val (col, row) = offset
-            rotated[i].col = (SHAPE_CELLS_COUNT - 1) - row
-            rotated[i].row = col
+data class ShapeRotation(
+    val offsets: Array<Coords> = arrayOf(),
+    var minCol: Int = Int.MAX_VALUE,
+    var maxCol: Int = Int.MIN_VALUE,
+    var minRow: Int = Int.MAX_VALUE,
+    var maxRow: Int = Int.MIN_VALUE,
+    var cols: Int = 0,
+    var rows: Int = 0,
+)
+
+fun newShape(base: Array<Coords>): Array<ShapeRotation> {
+    fun rotate(s: ShapeRotation) {
+        for (offset in s.offsets) {
+            val temp = offset.col
+            offset.col = -offset.row
+            offset.row = temp
         }
-        return rotated
     }
 
-    // normalize
-    val r1 = base.map { it.copy() }.toTypedArray()
-    var minCol = Int.MAX_VALUE
-    var minRow = Int.MAX_VALUE
-    for (idx in r1.indices) {
-        minCol = kotlin.math.min(minCol, r1[idx].col)
-        minRow = kotlin.math.min(minRow, r1[idx].row)
+    fun center(s: ShapeRotation) {
+        // normalize
+        var minCol = Int.MAX_VALUE
+        var minRow = Int.MAX_VALUE
+        for (offset in s.offsets) {
+            minCol = kotlin.math.min(minCol, offset.col)
+            minRow = kotlin.math.min(minRow, offset.row)
+        }
+
+        var width = 0
+        var height = 0
+
+        for (offset in s.offsets) {
+            offset.col -= minCol
+            offset.row -= minRow
+
+            width = kotlin.math.max(width, offset.col)
+            height = kotlin.math.max(height, offset.row)
+        }
+
+        width += 1
+        height += 1
+
+        // center
+        val centerColOffset = (SHAPE_CELLS_COUNT - width) / 2
+        val centerRowOffset = (SHAPE_CELLS_COUNT - height) / 2
+
+        for (offset in s.offsets) {
+            offset.col += centerColOffset
+            offset.row += centerRowOffset
+
+            s.minCol = kotlin.math.min(s.minCol, offset.col)
+            s.maxCol = kotlin.math.max(s.maxCol, offset.col)
+            s.minRow = kotlin.math.min(s.minRow, offset.row)
+            s.maxRow = kotlin.math.max(s.maxRow, offset.row)
+        }
+
+        s.cols = s.maxCol - s.minCol + 1
+        s.rows = s.maxRow - s.minRow + 1
     }
 
-    // center
-    var width = Int.MIN_VALUE
-    var height = Int.MIN_VALUE
-    for (idx in r1.indices) {
-        r1[idx].col -= minCol
-        r1[idx].row -= minRow
+    val r1 = ShapeRotation(base)
+    center(r1)
 
-        width = kotlin.math.max(width, r1[idx].col)
-        height = kotlin.math.max(height, r1[idx].row)
-    }
+    val r2 = ShapeRotation(r1.offsets.map { it.copy() }.toTypedArray())
+    rotate(r2)
+    center(r2)
 
-    val centerColOffset = (SHAPE_CELLS_COUNT - width) / 2
-    val centerRowOffset = (SHAPE_CELLS_COUNT - height) / 2
-    for (idx in r1.indices) {
-        r1[idx].col += centerColOffset
-        r1[idx].row += centerRowOffset
-    }
+    val r3 = ShapeRotation(r2.offsets.map { it.copy() }.toTypedArray())
+    rotate(r3)
+    center(r3)
 
-    val r2 = rotate(r1)
-    val r3 = rotate(r2)
-    val r4 = rotate(r3)
+    val r4 = ShapeRotation(r3.offsets.map { it.copy() }.toTypedArray())
+    rotate(r4)
+    center(r4)
+
     return arrayOf(r1, r2, r3, r4)
 }
 
@@ -90,7 +124,7 @@ val SHAPES = mapOf(
 
 data class Shape(var role: ShapeRole = ShapeRole.Recovery, var idx: Int = -1)
 
-fun shapeOffsets(shape: Shape, rotation: Int): Array<Coords> {
+fun getShapeRotation(shape: Shape, rotation: Int): ShapeRotation {
     val shapes = SHAPES[shape.role]
     checkNotNull(shapes) { "role: ${shape.role} idx: ${shape.idx}" }
     val s = shapes[shape.idx]
