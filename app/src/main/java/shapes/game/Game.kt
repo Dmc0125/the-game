@@ -1161,19 +1161,6 @@ class GameContext {
 
     // start screen
 
-    val startButton = Button(
-        bgColor = Color.blue,
-        textColor = Color.white,
-    )
-    val rotateButton = Button(
-        bgColor = Color.white,
-        textColor = Color.black,
-    )
-    val placeButton = Button(
-        bgColor = Color.white,
-        textColor = Color.black,
-    )
-
     var state: GameState = GameState.Countdown
     val countdown = Countdown(30f, 60f)
     val board = Board()
@@ -1306,19 +1293,12 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
 
     // touch
 
-    if (game.ui.nodes.size > 0) {
+    if (game.ui.nodesArenaCount > 0) {
+        uiProcessInput(game.ui, touch, game.elapsedTime)
+
         if (game.screen == GameScreen.Start) {
             // start button
-
-            val startButton = uiGetNode(game.ui, "start_button")
-            val justPressed = touch.action == TouchAction.Down &&
-                    !game.startButton.pressed &&
-                    uiPosInside(startButton, touch.position.x, touch.position.y)
-
-            if (justPressed) {
-                buttonPress(game.startButton, game.elapsedTime)
-            } else if (touch.action == TouchAction.Up && game.startButton.pressed) {
-                buttonRelease(game.startButton, game.elapsedTime)
+            if (uiButtonReleased(game.ui, "start_button")) {
                 game.screen = GameScreen.Playing
             }
         } else if (game.screen == GameScreen.Playing) {
@@ -1326,54 +1306,32 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
             if (currentShape.initialized) {
                 // place
                 var placed = false
-                run {
-                    val placeButtonUi = uiGetNode(game.ui, "button_place")
-                    val placeButton = game.placeButton
-                    val justPressed = touch.action == TouchAction.Down &&
-                            !placeButton.pressed &&
-                            uiPosInside(placeButtonUi, touch.position.x, touch.position.y)
-
-                    if (justPressed) {
-                        buttonPress(placeButton, game.elapsedTime)
-                    } else if (touch.action == TouchAction.Up && placeButton.pressed) {
-                        if (!currentShape.overlapping) {
-                            val linesCleared = gamePlaceShapeAndClear(game, false)
-                            game.state = GameState.PlayerTurnEnd(linesCleared)
-                            placed = true
-                        }
-                        buttonRelease(placeButton, game.elapsedTime)
+                if (uiButtonReleased(game.ui, "button_place")) {
+                    if (!currentShape.overlapping) {
+                        val linesCleared = gamePlaceShapeAndClear(game, false)
+                        game.state = GameState.PlayerTurnEnd(linesCleared)
+                        placed = true
                     }
                 }
 
                 if (!placed) {
                     // rotate
-                    run {
-                        val rotateButtonUi = uiGetNode(game.ui, "button_rotate")
-                        val rotateButton = game.rotateButton
-                        val justPressed = touch.action == TouchAction.Down &&
-                                !rotateButton.pressed &&
-                                uiPosInside(rotateButtonUi, touch.position.x, touch.position.y)
 
-                        if (justPressed) {
-                            buttonPress(rotateButton, game.elapsedTime)
-                        } else if (touch.action == TouchAction.Up && rotateButton.pressed) {
-                            currentShapeRotate(currentShape, game.elapsedTime)
+                    if (uiButtonReleased(game.ui, "button_rotate")) {
+                        currentShapeRotate(currentShape, game.elapsedTime)
 
-                            val board = uiGetNode(game.ui, "game_board")
-                            currentShapeUpdateProjection(
-                                currentShape,
-                                board,
-                                game.layout,
-                                game.board.cells,
-                                game.elapsedTime
-                            )
-
-                            buttonRelease(rotateButton, game.elapsedTime)
-                        }
+                        val board = uiGetNode(game.ui, "game_board")
+                        currentShapeUpdateProjection(
+                            currentShape,
+                            board,
+                            game.layout,
+                            game.board.cells,
+                            game.elapsedTime
+                        )
                     }
 
                     // drag
-                    run {
+                    if (!touch.consumed) {
                         val currentShapeContainer = uiGetNode(game.ui, "current_shape")
                         val justPressed = touch.action == TouchAction.Down &&
                                 !currentShape.dragging &&
@@ -1526,7 +1484,9 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
     // update layout
 
     val ui = game.ui
-    uiRootInit(ui, game.rootModifiers)
+
+    game.rootModifiers.ui = UiModifier.Box(Color.vanilla)
+    uiRootInit(ui, game.elapsedTime, game.rootModifiers)
 
     if (game.screen == GameScreen.Start) {
         uiColBegin(
@@ -1537,20 +1497,21 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
 
         // start button
         run {
-            animUpdate(game.startButton.anim, game.elapsedTime)
-
             val m = Modifiers(width = Size.FillMax)
             mPaddingHorizontal(m, 24f)
             mPaddingVertical(m, 20f)
+            m.ui = UiModifier.Button(Color.blue)
             uiRowBegin(ui, m, id = "start_button")
 
             uiText(
                 ui,
                 Modifiers(
-                    text = "start",
-                    textSize = 20f,
+                    ui = UiModifier.Text(
+                        text = "start",
+                        textSize = 20f,
+                        textColor = Color.white,
+                    ),
                 ),
-                id = "start_button_text",
             )
 
             uiRowEnd(ui)
@@ -1575,11 +1536,20 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
         run {
             // score
 
-            val m = Modifiers(width = Size.FillMaxF(0.6f), paddingTop = 10f)
+            val m = Modifiers(
+                width = Size.FillMaxF(0.6f),
+                paddingTop = 10f,
+                ui = UiModifier.Card(Color.blue),
+            )
             mPaddingHorizontal(m, 20f)
-            uiColBegin(ui, m, id = "score_board")
+            uiColBegin(ui, m)
 
-            uiText(ui, Modifiers(text = "score", textSize = 8f), id = "score_header_text")
+            uiText(
+                ui,
+                Modifiers(
+                    ui = UiModifier.Text(text = "score", textSize = 8f, textColor = Color.white),
+                ),
+            )
 
             run {
                 animUpdate(game.scoreAnim, game.elapsedTime)
@@ -1592,11 +1562,14 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 )
 
                 val m = Modifiers(
-                    text = "%06d".format(kotlin.math.round(game.scoreCurrent).toInt()),
-                    textSize = 24f,
+                    ui = UiModifier.Text(
+                        text = "%06d".format(kotlin.math.round(game.scoreCurrent).toInt()),
+                        textSize = 24f,
+                        textColor = Color.white,
+                    ),
                 )
                 mPaddingVertical(m, 14f)
-                uiText(ui, m, id = "score_value_text")
+                uiText(ui, m)
             }
 
             uiColEnd(ui)
@@ -1631,11 +1604,14 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 run {
                     uiColBegin(ui, Modifiers(height = Size.FillMax), verticalAlignment = Alignment.Center)
                     val m = Modifiers(
-                        text = "%02.01fs".format(remainingTime),
-                        textSize = 8f,
+                        ui = UiModifier.Text(
+                            text = "%02.01fs".format(remainingTime),
+                            textSize = 8f,
+                            textColor = Color.black,
+                        ),
                         width = Size.Abs(40f)
                     )
-                    uiText(ui, m, "timer_text")
+                    uiText(ui, m)
                     uiColEnd(ui)
                 }
 
@@ -1643,21 +1619,25 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
 
                 uiColBegin(
                     ui,
-                    Modifiers(width = Size.FillMax, height = Size.Abs(timerHeight)),
+                    Modifiers(Size.FillMax, Size.Abs(timerHeight)),
                     verticalAlignment = Alignment.Center
                 )
 
                 val m = Modifiers(width = Size.FillMax, height = Size.Abs(12f))
                 mPaddingHorizontal(m, 3f)
                 mPaddingVertical(m, 3f)
-                uiRowBegin(ui, m, id = "timer_bar")
+                m.ui = UiModifier.Box(bgColor = Color.ink, radius = 6f)
+                uiRowBegin(ui, m)
 
                 run {
                     // inner bar
                     uiRowBegin(
                         ui,
-                        Modifiers(width = Size.FillMaxF(progress), height = Size.FillMax),
-                        id = "timer_bar_inner",
+                        Modifiers(
+                            Size.FillMaxF(progress),
+                            Size.FillMax,
+                            ui = UiModifier.Box(bgColor = Color.blue, radius = 3f),
+                        ),
                     )
                     uiRowEnd(ui)
                 }
@@ -1724,10 +1704,20 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 val m = Modifiers(Size.FillMax, Size.FillMaxF(dockSize))
                 mPaddingHorizontal(m, 10f)
                 mPaddingVertical(m, 10f)
-                uiColBegin(ui, m, id = "next_shape_dock_ui")
+                m.ui = UiModifier.Card(bgColor = Color.ink, radius = 20f)
+                uiColBegin(ui, m)
 
                 run {
-                    uiText(ui, Modifiers(text = "Next", textSize = 8f), id = "next_shape_title")
+                    uiText(
+                        ui,
+                        Modifiers(
+                            ui = UiModifier.Text(
+                                text = "Next",
+                                textSize = 8f,
+                                textColor = Color.white,
+                            )
+                        ),
+                    )
 
                     verticalSpacer(8f)
 
@@ -1752,6 +1742,7 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
             val m = Modifiers(
                 width = Size.Abs(componentSize),
                 height = Size.Abs(componentSize),
+                ui = UiModifier.Card(Color.ink),
             )
             uiRowBegin(ui, m, id = "current_shape")
             uiRowEnd(ui)
@@ -1763,7 +1754,6 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 ui,
                 Modifiers(width = Size.Abs(componentSize), height = Size.Abs(componentSize)),
                 horizontalAlignment = Alignment.End,
-                id = "controls",
             )
 
             run {
@@ -1774,26 +1764,41 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 val textSize = 10f
                 val paddingTop = (buttonHeight - textSize) / 2f
 
-                animUpdate(game.rotateButton.anim, game.elapsedTime)
                 uiRowBegin(
                     ui,
-                    Modifiers(Size.FillMax, Size.Abs(buttonHeight), paddingTop = paddingTop),
+                    Modifiers(
+                        Size.FillMax,
+                        Size.Abs(buttonHeight),
+                        paddingTop = paddingTop,
+                        ui = UiModifier.Button(bgColor = Color.white)
+                    ),
                     Alignment.Center,
                     id = "button_rotate",
                 )
-                uiText(ui, Modifiers(text = "R", textSize = textSize), id = "button_rotate_text")
+                uiText(
+                    ui,
+                    Modifiers(ui = UiModifier.Text(text = "R", textSize = textSize, textColor = Color.ink)),
+                )
                 uiRowEnd(ui)
 
                 verticalSpacer(spacing)
 
-                animUpdate(game.placeButton.anim, game.elapsedTime)
                 uiRowBegin(
                     ui,
-                    Modifiers(Size.FillMax, Size.Abs(buttonHeight), paddingTop = paddingTop),
+                    Modifiers(
+                        Size.FillMax,
+                        Size.Abs(buttonHeight),
+                        paddingTop = paddingTop,
+                        ui = UiModifier.Button(bgColor = Color.white)
+                    ),
                     Alignment.Center,
                     id = "button_place",
                 )
-                uiText(ui, Modifiers(text = "Place", textSize = textSize), id = "button_place_text")
+                uiText(
+                    ui,
+                    Modifiers(ui = UiModifier.Text(text = "Place", textSize = textSize, textColor = Color.ink)),
+                    id = "button_place_text"
+                )
                 uiRowEnd(ui)
 
                 uiColEnd(ui)
@@ -1818,65 +1823,7 @@ fun gameRender(game: GameContext) {
     // ------------
     // HUD
 
-    val root = uiGetNode(game.ui, "root")
-    r.drawRect(0f, 0f, root.width, root.height, Color.vanilla)
-
-    if (game.screen == GameScreen.Start) {
-        val startButton = uiGetNode(game.ui, "start_button")
-        val startButtonText = uiGetNode(game.ui, "start_button_text")
-        buttonRender(game.startButton, startButton, startButtonText)
-    } else if (game.screen == GameScreen.Playing) {
-        run {
-            // top bar
-            val scoreBoard = uiGetNode(game.ui, "score_board")
-            cardRender(scoreBoard, Color.blue)
-
-            val scoreHeaderText = uiGetNode(game.ui, "score_header_text")
-            textRender(scoreHeaderText, Color.white)
-
-            val scoreValueText = uiGetNode(game.ui, "score_value_text")
-            textRender(scoreValueText, Color.white)
-        }
-
-        run {
-            // timer
-            val timerText = uiGetNode(game.ui, "timer_text")
-            textRender(timerText, Color.ink)
-
-            val bar = uiGetNode(game.ui, "timer_bar")
-            r.drawRoundRect(bar.posX, bar.posY, bar.width, bar.height, bar.height / 2f, Color.ink)
-
-            var barInner = uiGetNode(game.ui, "timer_bar_inner")
-            r.drawRoundRect(
-                barInner.posX, barInner.posY, barInner.width, barInner.height,
-                barInner.height / 2f, Color.blue,
-            )
-        }
-
-        // next shape
-        run {
-            val nextShapeDock = uiGetNode(game.ui, "next_shape_dock_ui")
-            cardRender(nextShapeDock, Color.ink, 20f)
-
-            val nextShapeTitle = uiGetNode(game.ui, "next_shape_title")
-            textRender(nextShapeTitle, Color.white)
-        }
-
-        // controls
-        run {
-            // rotate button
-            val rotateButton = uiGetNode(game.ui, "button_rotate")
-            val rotateButtonText = uiGetNode(game.ui, "button_rotate_text")
-            buttonRender(game.rotateButton, rotateButton, rotateButtonText)
-        }
-
-        run {
-            // place button
-            val placeButton = uiGetNode(game.ui, "button_place")
-            val placeButtonText = uiGetNode(game.ui, "button_place_text")
-            buttonRender(game.placeButton, placeButton, placeButtonText)
-        }
-    }
+    uiRender(game.ui, game.ui.root)
 
     // --------------
     // Game
@@ -2037,7 +1984,6 @@ fun gameRender(game: GameContext) {
         // current shape
         run {
             val shapeDock = uiGetNode(game.ui, "current_shape")
-            cardRender(shapeDock, Color.ink)
 
             val dockX = shapeDock.posX
             val dockY = shapeDock.posY

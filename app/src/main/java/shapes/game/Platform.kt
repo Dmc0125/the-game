@@ -9,9 +9,8 @@ enum class TouchAction {
 
 data class Touch(
     var action: TouchAction = TouchAction.None,
-    var isDown: Boolean = false,
     var position: Vec2 = Vec2(0f, 0f),
-    var startPosition: Vec2 = Vec2(0f, 0f),
+    var consumed: Boolean = false,
 )
 
 data class Rect(
