@@ -171,6 +171,8 @@ class AndroidTrace : shapes.game.Trace {
 }
 
 class MainActivity : AppCompatActivity() {
+    lateinit var appView: AppView
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -190,7 +192,18 @@ class MainActivity : AppCompatActivity() {
 
         Storage.init(this)
 
-        setContentView(AppView(this))
+        appView = AppView(this)
+        setContentView(appView)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        appView.resume()
+    }
+
+    override fun onPause() {
+        appView.pause()
+        super.onPause()
     }
 }
 
@@ -200,9 +213,23 @@ class AppView(context: Context) : View(context) {
     val renderer = AndroidRenderer()
     var updateRun = false
     val touch = shapes.game.Touch()
+    var running = false
+
+    fun resume() {
+        lastFrameTime = System.nanoTime()
+        running = true
+        Choreographer.getInstance().postFrameCallback(frameCallback)
+    }
+
+    fun pause() {
+        running = false
+        Choreographer.getInstance().removeFrameCallback(frameCallback)
+    }
 
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(currentTime: Long) {
+            if (!running) return
+
             if (lastFrameTime == 0L) {
                 lastFrameTime = currentTime
             }
@@ -215,6 +242,7 @@ class AppView(context: Context) : View(context) {
 
             touch.position.x /= game.scale
             touch.position.y /= game.scale
+            touch.consumed = false
 
             shapes.game.Platform.withRenderer(renderer)
             shapes.game.gameUpdate(game, deltaTimeSeconds, touch)
@@ -231,16 +259,6 @@ class AppView(context: Context) : View(context) {
             invalidate()
             Choreographer.getInstance().postFrameCallback(this)
         }
-    }
-
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        Choreographer.getInstance().postFrameCallback(frameCallback)
-    }
-
-    override fun onDetachedFromWindow() {
-        Choreographer.getInstance().removeFrameCallback(frameCallback)
-        super.onDetachedFromWindow()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -274,7 +292,7 @@ class AppView(context: Context) : View(context) {
 
 
     override fun onDraw(canvas: Canvas) {
-        if (!updateRun) return
+        if (!updateRun || !running) return
 
         // val drawBegin = System.nanoTime()
 

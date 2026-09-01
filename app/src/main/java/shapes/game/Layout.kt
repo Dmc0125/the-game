@@ -291,6 +291,8 @@ fun uiRender(ctx: UiContext, node: Container) {
 }
 
 fun uiProcessInput(ctx: UiContext, touch: Touch, elapsedTime: Float) {
+    if (touch.consumed) return
+
     nodes@ for (idx in ctx.nodesArenaCount - 1 downTo 0) {
         val node = ctx.nodesArena[idx]
 

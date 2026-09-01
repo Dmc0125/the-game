@@ -109,8 +109,8 @@ fun countdownUpdate(countdown: Countdown, layout: Layout, elapsedTime: Float): B
     }
 
     val textWidth = measureText(countdown.text, countdown.textSize)
-    countdown.textX = (layout.pgRect.width - textWidth) / 2
-    countdown.textY = countdown.textSize + (layout.pgRect.height - countdown.textSize) / 2
+    countdown.textX = (layout.boardSize - textWidth) / 2
+    countdown.textY = countdown.textSize + (layout.boardSize - countdown.textSize) / 2
 
     return false
 }
@@ -263,10 +263,10 @@ fun currentShapeUpdateProjection(
     cells: Array<Cell>,
     elapsedTime: Float,
 ) {
-    val boardInnerX = board.posX + layout.pgPadding
-    val boardInnerY = board.posY + layout.pgPadding
-    val boardInnerWidth = board.width - layout.pgPadding * 2f
-    val boardInnerHeight = board.height - layout.pgPadding * 2f
+    val boardInnerX = board.posX + layout.boardPadding
+    val boardInnerY = board.posY + layout.boardPadding
+    val boardInnerWidth = board.width - layout.boardPadding * 2f
+    val boardInnerHeight = board.height - layout.boardPadding * 2f
 
     val sr = getShapeRotation(currentShape.shape, currentShape.rotation)
     val dragPosition = currentShape.dragPosition.copy() // touch + offset * sens
@@ -501,14 +501,14 @@ fun announcerAnnounce(
 fun announcerUpdate(announcer: Announcer, layout: Layout, elapsedTime: Float) {
     val height = announcer.textSize
 
-    var quadrantCenterY = layout.pgRect.height / 4f  // upper half center
+    var quadrantCenterY = layout.boardSize / 4f  // upper half center
     var quadrantCenterX = 0f
 
     if (announcer.col <= CELLS_COUNT / 2) {
-        quadrantCenterX = layout.pgRect.width / 4f * 3f // right half center
+        quadrantCenterX = layout.boardSize / 4f * 3f // right half center
         announcer.rotation = 20f
     } else {
-        quadrantCenterX = layout.pgRect.width / 4f // left half center
+        quadrantCenterX = layout.boardSize / 4f // left half center
         announcer.rotation = -20f
     }
 
@@ -1064,28 +1064,6 @@ fun boardUpdateClearingCells(board: Board, elapsedTime: Float): BoardUpdateResul
     return result
 }
 
-fun boardRender(board: Board, layout: Layout) {
-    Platform.renderer.drawRoundRect(layout.pgRect, 24f, Color.ink)
-
-    for ((cellIdx, cell) in board.cells.withIndex()) {
-        if (cell.filled) {
-            val col = (cellIdx % CELLS_COUNT).toFloat()
-            val row = (cellIdx / CELLS_COUNT).toFloat()
-
-            val x = layout.pgPadding + col * layout.cellSize
-            val y = layout.pgPadding + row * layout.cellSize
-
-            Platform.renderer.drawRoundRect(
-                x + layout.cellPadding, y + layout.cellPadding,
-                layout.cellSize - layout.cellPadding * 2,
-                layout.cellSize - layout.cellPadding * 2,
-                layout.cellRadius,
-                cell.color,
-            )
-        }
-    }
-}
-
 fun boardRenderClearingAnimation(board: Board, layout: Layout) {
     for (row in 0..<CELLS_COUNT) {
         val rowLine = board.rowsClears[row]
@@ -1103,17 +1081,17 @@ fun boardRenderClearingAnimation(board: Board, layout: Layout) {
 }
 
 class Layout {
-    var pgRect = Rect()
-    var pgPadding = 0f
+    var boardSize = 0f
+    var boardPadding = 0f
     var cellSize = 0f
     var cellPadding = 0f
     var cellRadius = 0f
 }
 
 fun layoutUpdate(layout: Layout, boardSize: Float) {
-    layout.pgRect = Rect(0f, 0f, boardSize, boardSize)
-    layout.pgPadding = boardSize * PLAYGROUND_PADDING_FRACTION
-    layout.cellSize = (boardSize - layout.pgPadding * 2) / CELLS_COUNT
+    layout.boardSize = boardSize
+    layout.boardPadding = boardSize * PLAYGROUND_PADDING_FRACTION
+    layout.cellSize = (boardSize - layout.boardPadding * 2) / CELLS_COUNT
     layout.cellPadding = layout.cellSize * CELL_PADDING_FRACTION
     layout.cellRadius = layout.cellSize * CELL_RADIUS_FRACTION
 }
@@ -1123,8 +1101,8 @@ fun coordsToPos(layout: Layout, coords: Coords): Vec2 {
 }
 
 fun coordsToPos(layout: Layout, coords: Vec2): Vec2 {
-    val x = coords.x * layout.cellSize + layout.pgPadding
-    val y = coords.y * layout.cellSize + layout.pgPadding
+    val x = coords.x * layout.cellSize + layout.boardPadding
+    val y = coords.y * layout.cellSize + layout.boardPadding
     return Vec2(x, y)
 }
 
@@ -1179,12 +1157,13 @@ class GameContext {
     var scoreMultiplier = 1
     var score = 0
     var queuedScoreMultiplierUpdates = 0
-    var queuedScoreUpdates = 0
 
     val scoreAnim = Anim()
     var scoreCurrent = 0f
     var scoreFrom = 0f
     var scoreTarget = 0f
+
+    var scoreMultiplierVisual = 1
 }
 
 fun gameAnimateScore(game: GameContext, scoreChange: Int) {
@@ -1430,21 +1409,27 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 if (gs.linesCleared > 0) {
                     game.noClearStreak = 0
 
-                    if (gs.linesCleared > 1 || game.clearStreak > 0) {
+                    if (gs.linesCleared > 1) {
                         game.scoreMultiplier += gs.linesCleared
                         game.queuedScoreMultiplierUpdates += gs.linesCleared
                     }
 
-                    val scoreUpdates = gs.linesCleared * CELLS_COUNT
-                    val scoreChange = scoreUpdates * CELL_CLEAR_REWARD * game.scoreMultiplier
-                    game.queuedScoreUpdates += scoreUpdates
-                    game.score += scoreChange
                     game.clearStreak += 1
+
+                    var totalMultiplier = game.scoreMultiplier
+                    if (game.clearStreak > 0) {
+                        totalMultiplier *= game.clearStreak
+                    }
+
+                    val scoreUpdates = gs.linesCleared * CELLS_COUNT
+                    val scoreChange = scoreUpdates * CELL_CLEAR_REWARD * totalMultiplier
+                    game.score += scoreChange
 
                     game.state = GameState.ClearingAnimation
                 } else {
                     if (game.noClearStreak >= 5 && game.scoreMultiplier > 1) {
                         game.scoreMultiplier -= 1
+                        game.scoreMultiplierVisual -= 1
                     }
 
                     game.clearStreak = 0
@@ -1463,13 +1448,16 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
 
             if (result.linePopped && game.queuedScoreMultiplierUpdates > 0) {
                 game.queuedScoreMultiplierUpdates -= 1
+                game.scoreMultiplierVisual += 1
             }
 
             if (result.cellsFadedOut > 0) {
-                val updates = kotlin.math.min(result.cellsFadedOut, game.queuedScoreUpdates)
-                val totalChange = updates * CELL_CLEAR_REWARD * game.scoreMultiplier
-                game.queuedScoreUpdates -= updates
+                var totalMultiplier = game.scoreMultiplier
+                if (game.clearStreak > 0) {
+                    totalMultiplier *= game.clearStreak
+                }
 
+                val totalChange = result.cellsFadedOut * CELL_CLEAR_REWARD * totalMultiplier
                 gameAnimateScore(game, totalChange)
             }
 
@@ -1534,43 +1522,114 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
         uiRowBegin(ui, Modifiers(width = Size.FillMax))
 
         run {
-            // score
-
-            val m = Modifiers(
-                width = Size.FillMaxF(0.6f),
-                paddingTop = 10f,
-                ui = UiModifier.Card(Color.blue),
-            )
-            mPaddingHorizontal(m, 20f)
-            uiColBegin(ui, m)
-
-            uiText(
-                ui,
-                Modifiers(
-                    ui = UiModifier.Text(text = "score", textSize = 8f, textColor = Color.white),
-                ),
-            )
+            val topBarWidth = game.layout.boardSize
+            var topBarHeight = 0f
+            val scoreBoardWidth = topBarWidth * 0.7f
+            val spacing = topBarWidth * 0.05f
 
             run {
-                animUpdate(game.scoreAnim, game.elapsedTime)
-                game.scoreCurrent = animCurrent(
-                    game.scoreAnim,
-                    game.scoreFrom,
-                    game.scoreTarget,
-                    ::lerp,
-                    AnimationEasing.EaseOutSquared,
-                )
+                // score
 
                 val m = Modifiers(
-                    ui = UiModifier.Text(
+                    width = Size.Abs(scoreBoardWidth),
+                    paddingTop = 10f,
+                    ui = UiModifier.Card(Color.blue),
+                )
+                mPaddingHorizontal(m, 20f)
+                uiColBegin(ui, m)
+                topBarHeight += m.paddingTop
+
+                run {
+                    val uim = UiModifier.Text(text = "score", textSize = 8f, textColor = Color.white)
+                    uiText(ui, Modifiers(ui = uim))
+                    topBarHeight += uim.textSize
+                }
+
+                run {
+                    animUpdate(game.scoreAnim, game.elapsedTime)
+                    game.scoreCurrent = animCurrent(
+                        game.scoreAnim,
+                        game.scoreFrom,
+                        game.scoreTarget,
+                        ::lerp,
+                        AnimationEasing.EaseOutSquared,
+                    )
+
+                    val uim = UiModifier.Text(
                         text = "%06d".format(kotlin.math.round(game.scoreCurrent).toInt()),
                         textSize = 24f,
                         textColor = Color.white,
-                    ),
-                )
-                mPaddingVertical(m, 14f)
-                uiText(ui, m)
+                    )
+                    val m = Modifiers(ui = uim)
+                    mPaddingVertical(m, 14f)
+                    uiText(ui, m)
+
+                    topBarHeight += uim.textSize + m.paddingTop + m.paddingBottom
+                }
+
+                uiColEnd(ui)
             }
+
+            horizontalSpacer(spacing)
+
+            // mutlipliers
+            uiColBegin(
+                ui,
+                Modifiers(Size.FillMax, Size.Abs(topBarHeight))
+            )
+
+            run {
+                val blockHeight = topBarHeight * 0.42f
+                val spacing = topBarHeight - (blockHeight * 2f)
+                val radius = 13f
+
+                uiRowBegin(
+                    ui,
+                    Modifiers(
+                        Size.FillMax,
+                        Size.Abs(blockHeight),
+                        ui = UiModifier.Card(Color.yellow, radius),
+                    ),
+                    horizontalAlignment = Alignment.Center,
+                )
+                uiColBegin(ui, Modifiers(height = Size.FillMax), verticalAlignment = Alignment.Center)
+                uiText(
+                    ui, Modifiers(
+                        ui = UiModifier.Text(
+                            text = "${game.clearStreak}x streak",
+                            textSize = 8f,
+                            textColor = Color.black,
+                        )
+                    )
+                )
+                uiColEnd(ui)
+                uiRowEnd(ui)
+
+                verticalSpacer(spacing)
+
+                uiRowBegin(
+                    ui,
+                    Modifiers(
+                        Size.FillMax,
+                        Size.Abs(blockHeight),
+                        ui = UiModifier.Card(Color.red, radius),
+                    ),
+                    horizontalAlignment = Alignment.Center,
+                )
+                uiColBegin(ui, Modifiers(height = Size.FillMax), verticalAlignment = Alignment.Center)
+                uiText(
+                    ui, Modifiers(
+                        ui = UiModifier.Text(
+                            text = "${game.scoreMultiplierVisual}x mult",
+                            textSize = 8f,
+                            textColor = Color.black,
+                        )
+                    )
+                )
+                uiColEnd(ui)
+                uiRowEnd(ui)
+            }
+
 
             uiColEnd(ui)
         }
@@ -1630,13 +1689,28 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 uiRowBegin(ui, m)
 
                 run {
+                    val t = run {
+                        if (progress > 0.5f) {
+                            return@run 0f
+                        }
+
+                        val p = progress / 0.5f
+
+                        val waves = 7f
+                        val acceleration = 5f
+                        val phase = 2f * kotlin.math.PI * waves * (1f - p).pow(acceleration)
+                        val o = 1f - kotlin.math.cos(phase).toFloat()
+                        o / 2
+                    }
+                    val color = lerpColor(Color.lime, Color.red, t)
+
                     // inner bar
                     uiRowBegin(
                         ui,
                         Modifiers(
                             Size.FillMaxF(progress),
                             Size.FillMax,
-                            ui = UiModifier.Box(bgColor = Color.blue, radius = 3f),
+                            ui = UiModifier.Box(bgColor = color, radius = 3f),
                         ),
                     )
                     uiRowEnd(ui)
@@ -1657,8 +1731,8 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
         uiRowBegin(
             ui,
             Modifiers(
-                width = Size.Abs(game.layout.pgRect.width),
-                height = Size.Abs(game.layout.pgRect.height),
+                width = Size.Abs(game.layout.boardSize),
+                height = Size.Abs(game.layout.boardSize),
             ),
             id = "game_board",
         )
@@ -1675,7 +1749,7 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
         )
 
         run {
-            val width = game.layout.pgRect.width
+            val width = game.layout.boardSize
             val componentSize = width * 0.3f
             val spacing = (width - (componentSize * 3f)) / 2f
 
@@ -1848,9 +1922,9 @@ fun gameRender(game: GameContext) {
             // board cells
             for (row in 0 until CELLS_COUNT) {
                 val layout = game.layout
-                val y = layout.pgPadding + row * layout.cellSize
+                val y = layout.boardPadding + row * layout.cellSize
                 for (col in 0 until CELLS_COUNT) {
-                    val x = layout.pgPadding + col * layout.cellSize
+                    val x = layout.boardPadding + col * layout.cellSize
                     val idx = coordsToIdx(col, row)
                     val cell = game.board.cells[idx]
 
@@ -1889,8 +1963,8 @@ fun gameRender(game: GameContext) {
                     val leftCoords = currentProjectionCoords.x + s.minCol
                     val topCoords = currentProjectionCoords.y + s.minRow
 
-                    val leftPos = layout.pgPadding + leftCoords * layout.cellSize
-                    val topPos = layout.pgPadding + topCoords * layout.cellSize
+                    val leftPos = layout.boardPadding + leftCoords * layout.cellSize
+                    val topPos = layout.boardPadding + topCoords * layout.cellSize
 
                     val gridSize = SHAPE_CELLS_COUNT * layout.cellSize
                     val shapeCenterX = leftPos + s.cols * layout.cellSize / 2f
