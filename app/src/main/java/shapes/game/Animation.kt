@@ -1,22 +1,41 @@
 package shapes.game
 
-fun popCurve(anim: Anim): Float {
+class Keyframe(
+    val until: Float,
+    val from: Float,
+    val to: Float,
+    val easing: AnimationEasing,
+)
+
+fun keyframeCurrent(anim: Anim, frames: Array<Keyframe>): Float {
     val progress = animCurrent(anim, 0f, 1f, ::lerp)
-    return when {
-        progress < 0.2f -> lerp(1f, 1.2f, easeInSquared(progress / 0.2f))
-        progress < 0.8f -> lerp(1.2f, 0.9f, easeOutSquared((progress - 0.2f) / 0.6f))
-        else -> lerp(0.9f, 1f, easeOutSquared((progress - 0.8f) / 0.2f))
+    var elapsed = 0f
+
+    for (k in frames) {
+        if (progress <= k.until) {
+            val currentDuration = k.until - elapsed
+            val currentProgress = (progress - elapsed) / currentDuration
+            val t = easeFunctions[k.easing]?.invoke(currentProgress) ?: currentProgress
+            return lerp(k.from, k.to, t)
+        } else {
+            elapsed = k.until
+        }
     }
+
+    throw IllegalArgumentException("progress $progress is out of bounds for animation")
 }
 
-fun shrinkCurve(anim: Anim): Float {
-    val progress = animCurrent(anim, 0f, 1f, ::lerp)
-    return when {
-        progress < 0.2f -> lerp(1f, 0.9f, easeInSquared(progress / 0.2f))
-        progress < 0.8f -> lerp(0.9f, 1.05f, easeOutSquared((progress - 0.2f) / 0.6f))
-        else -> lerp(1.05f, 1f, easeOutSquared((progress - 0.8f) / 0.2f))
-    }
-}
+val shrinkKeyframe = arrayOf(
+    Keyframe(0.2f, 1f, 0.98f, AnimationEasing.EaseInSquared),
+    Keyframe(0.8f, 0.98f, 1.005f, AnimationEasing.EaseInSquared),
+    Keyframe(1f, 1.005f, 1f, AnimationEasing.EaseInSquared),
+)
+
+val popKeyframe = arrayOf(
+    Keyframe(0.2f, 1f, 1.2f, AnimationEasing.EaseInSquared),
+    Keyframe(0.8f, 1.2f, 0.9f, AnimationEasing.EaseOutSquared),
+    Keyframe(1f, 0.9f, 1f, AnimationEasing.EaseOutSquared),
+)
 
 fun lerpColor(start: Int, end: Int, progress: Float): Int {
     val a = (start shr 24) and 0xFF

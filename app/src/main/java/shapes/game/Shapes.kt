@@ -122,21 +122,64 @@ val SHAPES = mapOf(
     ),
 )
 
-data class Shape(var role: ShapeRole = ShapeRole.Recovery, var idx: Int = -1)
+data class ShapeReference(var role: ShapeRole = ShapeRole.Recovery, var idx: Int = -1)
 
-fun getShapeRotation(shape: Shape, rotation: Int): ShapeRotation {
+fun getShapeRotation(shape: ShapeReference, rotation: Int): ShapeRotation {
     val shapes = SHAPES[shape.role]
     checkNotNull(shapes) { "role: ${shape.role} idx: ${shape.idx}" }
     val s = shapes[shape.idx]
     return s[rotation % 4]
 }
 
-class ShapesBag {
-    val shapes = Array(20) { Shape() }
+class Bag<T>(val items: Array<T>) {
     var next = -1
 }
 
-fun shapesBagInit(bagShapes: Array<Shape>, random: Random = Random.Default) {
+fun <T> bagNext(bag: Bag<T>, generator: (items: Array<T>, start: Int, end: Int) -> Unit): T {
+    val bagSize = bag.items.size / 2
+
+    val isFirst = bag.next == -1
+    if (isFirst) {
+        generator(bag.items, 0, bagSize)
+        bag.next = 0
+    }
+
+    val isLast = bag.next == bag.items.size - 1
+    val isLastInFirstBag = !isLast && bag.next == bagSize - 1
+
+    if (isLast) {
+        generator(bag.items, 0, bagSize)
+    } else if (isLastInFirstBag) {
+        generator(bag.items, bagSize, bag.items.size)
+    }
+
+    val item = bag.items[bag.next]
+    if (isLast) {
+        bag.next = 0
+    } else {
+        bag.next += 1
+    }
+    return item
+}
+
+fun <T> bagPeek(bag: Bag<T>): T {
+    assert(bag.next != -1)
+    assert(bag.next < bag.items.size)
+    return bag.items[bag.next]
+}
+
+class ShapesBag {
+    val shapes = Bag(Array(20) { ShapeReference() })
+    val colors = Bag(Array(8) { 0 })
+}
+
+fun shapesBagInitShapes(
+    shapes: Array<ShapeReference>,
+    start: Int,
+    end: Int,
+    shapesPlaced: Int,
+    random: Random = Random.Default,
+) {
     // each bag consists of 10 shapes
     // - 4 recovery, 4 normal, 2 hard
     //
@@ -145,55 +188,116 @@ fun shapesBagInit(bagShapes: Array<Shape>, random: Random = Random.Default) {
     // rules:
     // 1. start with 1 recovery
     // 2. 2 hard shapes can not be adjacent
-    var currentIdx = 0
+    var currentIdx = start + 0
 
     fun chooseShape(role: ShapeRole) {
-        val shapes = SHAPES[role]!!
-        bagShapes[currentIdx].role = role
-        bagShapes[currentIdx].idx = Random.nextInt(shapes.size)
+        val shapesMap = SHAPES[role]!!
+        shapes[currentIdx].role = role
+        shapes[currentIdx].idx = Random.nextInt(shapesMap.size)
         currentIdx += 1
     }
 
-    chooseShape(ShapeRole.Recovery)
-    chooseShape(ShapeRole.Normal)
-    chooseShape(ShapeRole.Recovery)
-    chooseShape(ShapeRole.Hard)
-    chooseShape(ShapeRole.Recovery)
-    chooseShape(ShapeRole.Normal)
-    chooseShape(ShapeRole.Recovery)
-    chooseShape(ShapeRole.Hard)
-    chooseShape(ShapeRole.Recovery)
-    chooseShape(ShapeRole.Normal)
+    when {
+        // first 2 bags
+        shapesPlaced < 20 -> {
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Normal)
+        }
+        // second 2 bags
+        shapesPlaced < 40 -> {
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Recovery)
+        }
+        // third 2 bags
+        shapesPlaced < 60 -> {
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Recovery)
+        }
+
+        else -> {
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Recovery)
+            chooseShape(ShapeRole.Hard)
+            chooseShape(ShapeRole.Normal)
+            chooseShape(ShapeRole.Recovery)
+        }
+    }
 }
 
-fun shapesBagNext(bag: ShapesBag): Shape {
-    val isFirst = bag.next == -1
-    if (isFirst) {
-        val shapes = bag.shapes.sliceArray(0..<10)
-        shapesBagInit(shapes)
-        bag.next = 0
+fun shapesBagInitColors(colors: Array<Int>, start: Int, end: Int, shapesPlaced: Int) {
+    when {
+        shapesPlaced < 10 -> colors.fill(Color.lime, start, end)
+        shapesPlaced < 20 -> {
+            colors[start] = Color.lime
+            colors[start + 1] = Color.lime
+            colors[start + 2] = Color.yellow
+            colors[start + 3] = Color.yellow
+        }
+
+        shapesPlaced < 30 -> {
+            colors[start] = Color.lime
+            colors[start + 1] = Color.lime
+            colors[start + 2] = Color.yellow
+            colors[start + 3] = Color.blue
+        }
+
+        else -> {
+            colors[start] = Color.lime
+            colors[start + 1] = Color.purple
+            colors[start + 2] = Color.yellow
+            colors[start + 3] = Color.blue
+        }
     }
 
-    val isLast = bag.next == 19
-    if (isLast) {
-        val shapes = bag.shapes.sliceArray(0..<10)
-        shapesBagInit(shapes)
-    } else if (bag.next == 9) {
-        val shapes = bag.shapes.sliceArray(10..<20)
-        shapesBagInit(shapes)
+    for (i in end - 1 downTo start) {
+        val j = Random.nextInt(start, i + 1)
+        val temp = colors[i]
+        colors[i] = colors[j]
+        colors[j] = temp
     }
-
-    val shape = bag.shapes[bag.next]
-    if (isLast) {
-        bag.next = 0
-    } else {
-        bag.next += 1
-    }
-    return shape
 }
 
-fun shapesBagPeek(bag: ShapesBag): Shape {
-    assert(bag.next != -1)
-    assert(bag.next < bag.shapes.size)
-    return bag.shapes[bag.next]
+data class Shape(
+    val reference: ShapeReference = ShapeReference(),
+    val color: Int = 0,
+)
+
+fun shapesBagNext(bag: ShapesBag, shapesPlaced: Int): Shape {
+    val nextShape = bagNext(bag.shapes) { items, start, end -> shapesBagInitShapes(items, start, end, shapesPlaced) }
+    val nextColor = bagNext(bag.colors) { items, start, end -> shapesBagInitColors(items, start, end, shapesPlaced) }
+    return Shape(nextShape, nextColor)
 }
+
+fun shapesBagPeek(bag: ShapesBag): Shape = Shape(
+    bagPeek(bag.shapes),
+    bagPeek(bag.colors),
+)

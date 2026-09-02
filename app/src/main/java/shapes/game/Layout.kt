@@ -330,6 +330,7 @@ fun uiProcessInput(ctx: UiContext, touch: Touch, elapsedTime: Float) {
             is UiModifier.Button -> {
                 val buttonState = ctx.buttons[node.id]
                 check(buttonState != null) { "Button state not found for node ${node.id}" }
+                buttonState.clicked = false
 
                 val justPressed = touch.action == TouchAction.Down &&
                         !buttonState.pressed &&
