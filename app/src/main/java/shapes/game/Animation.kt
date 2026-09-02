@@ -1,5 +1,23 @@
 package shapes.game
 
+fun popCurve(anim: Anim): Float {
+    val progress = animCurrent(anim, 0f, 1f, ::lerp)
+    return when {
+        progress < 0.2f -> lerp(1f, 1.2f, easeInSquared(progress / 0.2f))
+        progress < 0.8f -> lerp(1.2f, 0.9f, easeOutSquared((progress - 0.2f) / 0.6f))
+        else -> lerp(0.9f, 1f, easeOutSquared((progress - 0.8f) / 0.2f))
+    }
+}
+
+fun shrinkCurve(anim: Anim): Float {
+    val progress = animCurrent(anim, 0f, 1f, ::lerp)
+    return when {
+        progress < 0.2f -> lerp(1f, 0.9f, easeInSquared(progress / 0.2f))
+        progress < 0.8f -> lerp(0.9f, 1.05f, easeOutSquared((progress - 0.2f) / 0.6f))
+        else -> lerp(1.05f, 1f, easeOutSquared((progress - 0.8f) / 0.2f))
+    }
+}
+
 fun lerpColor(start: Int, end: Int, progress: Float): Int {
     val a = (start shr 24) and 0xFF
     val r = (start shr 16) and 0xFF

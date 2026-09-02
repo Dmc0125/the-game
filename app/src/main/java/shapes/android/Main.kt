@@ -16,6 +16,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import shapes.game.FontWeight
 import shapes.game.Platform
 import shapes.game.string
+import android.util.Log
 
 object AppFont {
     data class FontKey(val name: String, val weight: FontWeight)
@@ -184,6 +185,7 @@ class MainActivity : AppCompatActivity() {
 
         this.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
+        window.attributes.preferredRefreshRate = display.refreshRate
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowCompat.getInsetsController(window, window.decorView).apply {
             hide(WindowInsetsCompat.Type.systemBars())
@@ -207,6 +209,30 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
+class Metrics {
+    var beginTime = 0L
+    var totalUpdateTime = 0f
+    var totalDrawTime = 0f
+    var frameCount = 0
+
+    fun log(time: Long) {
+        val elapsed = (time - beginTime) / 1e9f
+        if (elapsed >= 10f) {
+            val avgUpdateTime = totalUpdateTime / frameCount
+            val avgDrawTime = totalDrawTime / frameCount
+            val avgFps = frameCount / elapsed
+            Log.i(
+                "metris",
+                "avg update time: $avgUpdateTime ms, avg draw time: $avgDrawTime ms, avg fps: $avgFps",
+            )
+            beginTime = time
+            totalUpdateTime = 0f
+            totalDrawTime = 0f
+            frameCount = 0
+        }
+    }
+}
+
 class AppView(context: Context) : View(context) {
     var lastFrameTime = 0L
     val game = shapes.game.GameContext()
@@ -214,6 +240,8 @@ class AppView(context: Context) : View(context) {
     var updateRun = false
     val touch = shapes.game.Touch()
     var running = false
+    val metrics = Metrics()
+
 
     fun resume() {
         lastFrameTime = System.nanoTime()
@@ -234,7 +262,7 @@ class AppView(context: Context) : View(context) {
                 lastFrameTime = currentTime
             }
 
-            // val frameBegin = System.nanoTime()
+            val frameBegin = System.nanoTime()
 
             val deltaTime = currentTime - lastFrameTime
             lastFrameTime = currentTime
@@ -253,8 +281,7 @@ class AppView(context: Context) : View(context) {
 
             updateRun = true
 
-            // val frameDuration = (System.nanoTime() - frameBegin) / 1e6f
-            // println("Frame update time: $frameDuration ms")
+            metrics.totalUpdateTime += (System.nanoTime() - frameBegin) / 1e6f
 
             invalidate()
             Choreographer.getInstance().postFrameCallback(this)
@@ -294,14 +321,15 @@ class AppView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         if (!updateRun || !running) return
 
-        // val drawBegin = System.nanoTime()
+        val drawBegin = System.nanoTime()
 
         renderer.canvas = canvas
         shapes.game.Platform.withRenderer(renderer)
         shapes.game.gameRender(game)
 
-        // val drawDuration = (System.nanoTime() - drawBegin) / 1e6f
-        // println("draw duration: $drawDuration ms")
+        metrics.totalDrawTime += (System.nanoTime() - drawBegin) / 1e6f
+        metrics.frameCount += 1
+        metrics.log(System.nanoTime())
     }
 }
 

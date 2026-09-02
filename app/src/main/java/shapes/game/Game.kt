@@ -1154,16 +1154,20 @@ class GameContext {
 
     var clearStreak = 0
     var noClearStreak = 0
-    var scoreMultiplier = 1
+    var comboMultiplier = 1
     var score = 0
-    var queuedScoreMultiplierUpdates = 0
+    var queuedComboMultiplierUpdates = 0
 
     val scoreAnim = Anim()
     var scoreCurrent = 0f
     var scoreFrom = 0f
     var scoreTarget = 0f
 
-    var scoreMultiplierVisual = 1
+    var comboMultiplierVisual = 1
+    var comboMultiplierIncreased = false
+    val comboMultiplierAnim = Anim()
+    var clearStreakMultiplierIncreased = false
+    val clearStreakMultiplierAnim = Anim()
 }
 
 fun gameAnimateScore(game: GameContext, scoreChange: Int) {
@@ -1177,7 +1181,7 @@ fun gamePlaceShapeAndClear(game: GameContext, forced: Boolean): Int {
     val scoreChange = if (forced) {
         cellCount * -10
     } else {
-        cellCount * game.scoreMultiplier
+        cellCount * game.comboMultiplier * game.clearStreak
     }
 
     game.score += scoreChange
@@ -1208,12 +1212,8 @@ fun gameForcePlaceShape(game: GameContext): GameState {
         forced = true
     }
 
-    // if (!game.currentShape.projectionAnim.animating) {
     val linesCleared = gamePlaceShapeAndClear(game, forced)
     return GameState.PlayerTurnEnd(linesCleared)
-    // } else {
-    //     return GameState.AnimatingCurrentShape(true)
-    // }
 }
 
 fun coordsToIdx(col: Int, row: Int): Int {
@@ -1372,34 +1372,30 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
 
         // current shape
 
-        when (val gs = game.state) {
-            GameState.Placing -> {
-                if (!game.currentShape.initialized) {
-                    val shape = shapesBagNext(game.shapesBag)
-                    val (gameOver, newShape) = currentShapeSpawn(shape, game.board, game.elapsedTime)
-                    game.roundStart = game.elapsedTime
+        if (game.state == GameState.Placing) {
+            if (!game.currentShape.initialized) {
+                val shape = shapesBagNext(game.shapesBag)
+                val (gameOver, newShape) = currentShapeSpawn(shape, game.board, game.elapsedTime)
+                game.roundStart = game.elapsedTime
 
-                    if (gameOver) {
-                        game.state = GameState.GameOver
-                        return
-                    }
-
-                    game.currentShape = newShape
-
-                    val nextShape = shapesBagPeek(game.shapesBag)
-                    game.roundDuration = currentRoundDuration(game.shapesPlaced)
-                    game.nextShape = nextShape
-                } else {
-                    if (game.roundStart + game.roundDuration < game.elapsedTime) {
-                        game.state = gameForcePlaceShape(game)
-                    }
-
-                    animUpdate(game.currentShape.projectionAnim, game.elapsedTime)
-                    animUpdate(game.currentShape.rotationAnim, game.elapsedTime)
+                if (gameOver) {
+                    game.state = GameState.GameOver
+                    return
                 }
-            }
 
-            else -> Unit
+                game.currentShape = newShape
+
+                val nextShape = shapesBagPeek(game.shapesBag)
+                game.roundDuration = currentRoundDuration(game.shapesPlaced)
+                game.nextShape = nextShape
+            } else {
+                if (game.roundStart + game.roundDuration < game.elapsedTime) {
+                    game.state = gameForcePlaceShape(game)
+                }
+
+                animUpdate(game.currentShape.projectionAnim, game.elapsedTime)
+                animUpdate(game.currentShape.rotationAnim, game.elapsedTime)
+            }
         }
 
         // turn end
@@ -1410,13 +1406,15 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                     game.noClearStreak = 0
 
                     if (gs.linesCleared > 1) {
-                        game.scoreMultiplier += gs.linesCleared
-                        game.queuedScoreMultiplierUpdates += gs.linesCleared
+                        game.comboMultiplier += gs.linesCleared
+                        game.queuedComboMultiplierUpdates += gs.linesCleared
                     }
 
                     game.clearStreak += 1
+                    game.clearStreakMultiplierIncreased = true
+                    animBegin(game.clearStreakMultiplierAnim, 0.2f, game.elapsedTime)
 
-                    var totalMultiplier = game.scoreMultiplier
+                    var totalMultiplier = game.comboMultiplier
                     if (game.clearStreak > 0) {
                         totalMultiplier *= game.clearStreak
                     }
@@ -1427,12 +1425,20 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
 
                     game.state = GameState.ClearingAnimation
                 } else {
-                    if (game.noClearStreak >= 5 && game.scoreMultiplier > 1) {
-                        game.scoreMultiplier -= 1
-                        game.scoreMultiplierVisual -= 1
+                    if (game.noClearStreak >= 5 && game.comboMultiplier > 1) {
+                        game.comboMultiplier -= 1
+                        game.comboMultiplierVisual -= 1
+
+                        game.comboMultiplierIncreased = false
+                        animBegin(game.comboMultiplierAnim, 0.2f, game.elapsedTime)
                     }
 
-                    game.clearStreak = 0
+                    if (game.clearStreak > 0) {
+                        game.clearStreak = 0
+                        game.clearStreakMultiplierIncreased = false
+                        animBegin(game.clearStreakMultiplierAnim, 0.2f, game.elapsedTime)
+                    }
+
                     game.noClearStreak += 1
                     game.state = GameState.Placing
                 }
@@ -1446,13 +1452,15 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
         if (game.state == GameState.ClearingAnimation) {
             val result = boardUpdateClearingCells(game.board, game.elapsedTime)
 
-            if (result.linePopped && game.queuedScoreMultiplierUpdates > 0) {
-                game.queuedScoreMultiplierUpdates -= 1
-                game.scoreMultiplierVisual += 1
+            if (result.linePopped && game.queuedComboMultiplierUpdates > 0) {
+                game.queuedComboMultiplierUpdates -= 1
+                game.comboMultiplierVisual += 1
+                game.comboMultiplierIncreased = true
+                animBegin(game.comboMultiplierAnim, 0.2f, game.elapsedTime)
             }
 
             if (result.cellsFadedOut > 0) {
-                var totalMultiplier = game.scoreMultiplier
+                var totalMultiplier = game.comboMultiplier
                 if (game.clearStreak > 0) {
                     totalMultiplier *= game.clearStreak
                 }
@@ -1573,21 +1581,30 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
             horizontalSpacer(spacing)
 
             // mutlipliers
-            uiColBegin(
-                ui,
-                Modifiers(Size.FillMax, Size.Abs(topBarHeight))
-            )
+            uiColBegin(ui, Modifiers(Size.FillMax, Size.Abs(topBarHeight)))
 
             run {
                 val blockHeight = topBarHeight * 0.42f
                 val spacing = topBarHeight - (blockHeight * 2f)
                 val radius = 13f
 
+                var clearStreakScale = 1f
+                if (game.clearStreakMultiplierAnim.running) {
+                    animUpdate(game.clearStreakMultiplierAnim, game.elapsedTime)
+                    if (game.clearStreakMultiplierIncreased) {
+                        clearStreakScale = popCurve(game.clearStreakMultiplierAnim)
+                    } else {
+                        clearStreakScale = shrinkCurve(game.clearStreakMultiplierAnim)
+                    }
+                }
+
                 uiRowBegin(
                     ui,
                     Modifiers(
                         Size.FillMax,
                         Size.Abs(blockHeight),
+                        scaleX = clearStreakScale,
+                        scaleY = clearStreakScale,
                         ui = UiModifier.Card(Color.yellow, radius),
                     ),
                     horizontalAlignment = Alignment.Center,
@@ -1607,11 +1624,23 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
 
                 verticalSpacer(spacing)
 
+                var multiplierScale = 1f
+                if (game.comboMultiplierAnim.running) {
+                    animUpdate(game.comboMultiplierAnim, game.elapsedTime)
+                    if (game.comboMultiplierIncreased) {
+                        multiplierScale = popCurve(game.comboMultiplierAnim)
+                    } else {
+                        multiplierScale = shrinkCurve(game.comboMultiplierAnim)
+                    }
+                }
+
                 uiRowBegin(
                     ui,
                     Modifiers(
                         Size.FillMax,
                         Size.Abs(blockHeight),
+                        scaleX = multiplierScale,
+                        scaleY = multiplierScale,
                         ui = UiModifier.Card(Color.red, radius),
                     ),
                     horizontalAlignment = Alignment.Center,
@@ -1620,7 +1649,7 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 uiText(
                     ui, Modifiers(
                         ui = UiModifier.Text(
-                            text = "${game.scoreMultiplierVisual}x mult",
+                            text = "${game.comboMultiplierVisual}x combo",
                             textSize = 8f,
                             textColor = Color.black,
                         )
@@ -2021,7 +2050,7 @@ fun gameRender(game: GameContext) {
 
         // next shape
         run {
-            if (game.state == GameState.Placing) {
+            if (game.state == GameState.Placing || game.state == GameState.ClearingAnimation) {
                 val nextShapeDock = uiGetNode(game.ui, "next_shape_dock")
 
                 val dockX = nextShapeDock.posX

@@ -48,6 +48,10 @@ sealed interface UiModifier {
     ) : UiModifier
 }
 
+enum class ScaleOrigin {
+    Center,
+}
+
 data class Modifiers(
     var width: Size = Size.Fit,
     var height: Size = Size.Fit,
@@ -56,6 +60,11 @@ data class Modifiers(
     var paddingTop: Float = 0f,
     var paddingRight: Float = 0f,
     var paddingBottom: Float = 0f,
+
+    var scaleX: Float = 1f,
+    var scaleY: Float = 1f,
+    var scaleOriginX: ScaleOrigin = ScaleOrigin.Center,
+    var scaleOriginY: ScaleOrigin = ScaleOrigin.Center,
 
     // ui
     var ui: UiModifier = UiModifier.None,
@@ -210,6 +219,23 @@ fun uiRender(ctx: UiContext, node: Container) {
 
     val r = Platform.renderer
 
+    val doScale = node.modifiers.scaleX != 1f || node.modifiers.scaleY != 1f
+    if (doScale) {
+        r.save()
+
+        val scaleOriginX = when (node.modifiers.scaleOriginX) {
+            ScaleOrigin.Center -> node.posX + node.width / 2f
+        }
+        val scaleOriginY = when (node.modifiers.scaleOriginY) {
+            ScaleOrigin.Center -> node.posY + node.height / 2f
+        }
+
+        r.scale(
+            node.modifiers.scaleX, node.modifiers.scaleY,
+            scaleOriginX, scaleOriginY,
+        )
+    }
+
     when (val ui = node.modifiers.ui) {
         UiModifier.None -> childrenRender(node)
 
@@ -287,6 +313,10 @@ fun uiRender(ctx: UiContext, node: Container) {
 
             r.restore()
         }
+    }
+
+    if (doScale) {
+        r.restore()
     }
 }
 
