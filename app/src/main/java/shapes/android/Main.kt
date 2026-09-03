@@ -179,8 +179,6 @@ class MainActivity : AppCompatActivity() {
 
         Platform.withTrace(AndroidTrace())
 
-        AppFont.initFont(this, shapes.game.FONT_DMMONO)
-        AppFont.initFont(this, shapes.game.FONT_MANROPE)
         AppFont.initFont(this, shapes.game.FONT_SUPPLY_CENTER)
 
         this.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT

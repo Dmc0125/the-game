@@ -26,8 +26,8 @@ fun keyframeCurrent(anim: Anim, frames: Array<Keyframe>): Float {
 }
 
 val shrinkKeyframe = arrayOf(
-    Keyframe(0.2f, 1f, 0.98f, AnimationEasing.EaseInSquared),
-    Keyframe(0.8f, 0.98f, 1.005f, AnimationEasing.EaseInSquared),
+    Keyframe(0.2f, 1f, 0.99f, AnimationEasing.EaseInSquared),
+    Keyframe(0.8f, 0.99f, 1.005f, AnimationEasing.EaseInSquared),
     Keyframe(1f, 1.005f, 1f, AnimationEasing.EaseInSquared),
 )
 

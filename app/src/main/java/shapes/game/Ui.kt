@@ -1,5 +1,7 @@
 package shapes.game
 
+const val FONT_SUPPLY_CENTER = "supplycenter"
+
 const val UI_RADIUS = 24f
 const val STROKE_WIDTH = 3f
 const val SHADOW_OFFSET = 4f
@@ -42,4 +44,12 @@ object Color {
 
 fun textRender(text: String, x: Float, y: Float, color: Int, textSize: Float) {
     Platform.renderer.drawText(text, x, y, color, textSize, FontWeight.Regular, FONT_SUPPLY_CENTER)
+}
+
+fun textMeasure(text: String, textSize: Float): Float {
+    return Platform.renderer.measureText(text, textSize, FontWeight.Regular, FONT_SUPPLY_CENTER)
+}
+
+fun textStroke(text: String, x: Float, y: Float, strokeWidth: Float, color: Int, textSize: Float) {
+    Platform.renderer.strokeText(text, x, y, strokeWidth, color, textSize, FontWeight.Regular, FONT_SUPPLY_CENTER)
 }
