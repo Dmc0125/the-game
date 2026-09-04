@@ -14,6 +14,7 @@ object Color {
 
     const val ink = 0xff182622.toInt()
     const val vanilla = 0xfff4eddd.toInt()
+    const val vanilla2 = 0xffebdfc1.toInt()
 
     const val blue = 0xff65bed0.toInt()
     const val red = 0xfff25b43.toInt()
@@ -56,6 +57,13 @@ object Color {
         (Color.g(color) - amount).coerceIn(0, 255),
         (Color.b(color) - amount).coerceIn(0, 255),
     )
+
+    fun darken(color: Int, a: Int, r: Int, g: Int, b: Int): Int = Color.argb(
+        a,
+        (Color.r(color) - r).coerceIn(0, 255),
+        (Color.g(color) - g).coerceIn(0, 255),
+        (Color.b(color) - b).coerceIn(0, 255),
+    )
 }
 
 fun textRender(text: String, x: Float, y: Float, color: Int, textSize: Float) {
@@ -81,41 +89,46 @@ fun cellRender(
 ) {
     val r = Platform.renderer
 
-    val strokeColor = Color.brighten(color, 25)
-    val lightColor = Color.brighten(color, 20)
-    val darkColor = Color.darken(color, 40)
+    val x = x + padding
+    val y = y + padding
+    val size = size - padding * 2
 
-    val innerx = x + padding
-    val innery = y + padding
-    val innerWidth = size - padding * 2
-    val innerHeight = size - padding * 2
+    val strokeWidth = 1.5f
+    val shadowOffset = 1f
+    val alpha = Color.a(color)
 
+    // cell
+
+    val strokeOffset = strokeWidth / 2f
     r.drawRoundRect(
-        innerx, innery,
-        innerWidth, innerHeight,
-        radius,
-        lightColor,
-    )
-    val offset = layout.cellSize * 0.1f
-    r.drawRoundRect(
-        innerx + offset, innery + offset,
-        innerWidth - offset, innerHeight - offset,
-        radius,
-        darkColor,
-    )
-    r.drawRoundRect(
-        innerx + offset, innery + offset,
-        innerWidth - offset * 2, innerHeight - offset * 2,
-        radius,
+        x + strokeOffset, y + strokeOffset,
+        size - strokeWidth, size - strokeWidth,
+        size * CELL_RADIUS_FRACTION,
         color,
     )
+
+    val strokeColor = Color.addAlpha(alpha, Color.darken(color, 60))
+    val strokeSize = size - strokeWidth
     r.strokeRoundRect(
-        innerx + offset, innery + offset,
-        innerWidth - offset * 2, innerHeight - offset * 2,
-        radius,
+        x + strokeOffset, y + strokeOffset,
+        strokeSize, strokeSize,
+        strokeSize * CELL_RADIUS_FRACTION,
         strokeColor,
-        1f,
+        strokeWidth,
     )
+
+    run {
+        // reflection
+        val reflectionColor = Color.addAlpha(alpha, Color.brighten(color, 40))
+
+        val x = x + size * 0.2f
+        val y = y + size * 0.2f
+
+        val width = size * 0.4f
+        val height = size * 0.2f
+
+        r.drawRoundRect(x, y, width, height, size / 2f, reflectionColor)
+    }
 }
 
 // UI
@@ -596,6 +609,8 @@ fun buildHUD(game: GameContext) {
         uiRowEnd(ui)
 
         buildBottomBar(game)
+    } else if (game.screen == GameScreen.GameOver) {
+
     }
 
     uiRootEnd(ui)

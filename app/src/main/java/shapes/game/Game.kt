@@ -6,7 +6,7 @@ import kotlin.random.Random
 const val RADIUS = 8f
 const val CELLS_COUNT = 12
 const val SHAPE_CELLS_COUNT = 4
-const val CELL_PADDING_FRACTION = 0.075f
+const val CELL_PADDING_FRACTION = 0.05f
 const val CELL_RADIUS_FRACTION = 0.25f
 const val PLAYGROUND_PADDING_FRACTION = 0.04f
 const val DRAG_SENSITIVITY = 2f
@@ -489,19 +489,27 @@ fun currentShapeRender(
 
                 x += layout.cellPadding
                 y += layout.cellPadding
-                var innerSize = layout.cellSize - layout.cellPadding * 2
+                var size = layout.cellSize - layout.cellPadding * 2
 
-                // val projectionStrokeColor = Color.addAlpha(200, color)
-                val projectionBgColor = Color.addAlpha(200, color)
+                val strokeWidth = 1.5f
+                val strokeOffset = strokeWidth / 2f
+                run {
+                    // background
+                    val projectionBgColor = Color.addAlpha(150, color)
+                    r.drawRoundRect(
+                        x + strokeOffset, y + strokeOffset,
+                        size - strokeWidth, size - strokeWidth,
+                        layout.cellRadius, projectionBgColor,
+                    )
+                }
 
-                r.drawRoundRect(x, y, innerSize, innerSize, layout.cellRadius, projectionBgColor)
-
-                // val strokeWidth = 2f
-                // x += strokeWidth
-                // y += strokeWidth
-                // innerSize -= strokeWidth * 2
-
-                // r.strokeRoundRect(x, y, innerSize, innerSize, layout.cellRadius, projectionStrokeColor, strokeWidth)
+                r.strokeRoundRect(
+                    x + strokeOffset, y + strokeOffset,
+                    size - strokeWidth, size - strokeWidth,
+                    size * CELL_RADIUS_FRACTION,
+                    color,
+                    strokeWidth,
+                )
             }
 
             r.restore()
@@ -1098,11 +1106,13 @@ fun boardRender(board: Board, gameBoardUi: Container, layout: Layout) {
         r.scale(scale, scale, boardCenterX, boardCenterY)
     }
 
-    r.drawRoundRect(
-        gameBoardUi.posX, gameBoardUi.posY,
-        gameBoardUi.width, gameBoardUi.height,
-        UI_RADIUS, Color.ink,
-    )
+    run {
+        r.drawRoundRect(
+            gameBoardUi.posX, gameBoardUi.posY,
+            gameBoardUi.width, gameBoardUi.height,
+            UI_RADIUS, Color.ink,
+        )
+    }
 
     r.translate(gameBoardUi.posX, gameBoardUi.posY)
 
@@ -1146,7 +1156,7 @@ class Announcer {
     companion object {
         const val TEXT_SIZE = 48f
         const val BANNER_HEIGHT = TEXT_SIZE + 20f + 20f
-        const val DURATION = 0.7f
+        const val DURATION = 1f
 
         val scaleFrames = arrayOf(
             Keyframe(0.2f, 0.5f, 1.2f, AnimationEasing.EaseOutSquared),
@@ -1161,12 +1171,21 @@ class Announcer {
         )
     }
 
+    class Particle {
+        val pos = Vec2(0f, 0f)
+        var vel = 0f
+        var width = 30f
+        var height = 4f
+        var spawned = false
+    }
+
     var text = ""
     var bannerY = 0f
     var bannerWidth = 0f
     val pos = Vec2(0f, 0f)
     val center = Vec2(0f, 0f)
     val anim = Anim()
+    val particles = Array(10) { Particle() }
 }
 
 fun announcerAnnounce(announcer: Announcer, clearCount: Int, elapsedTime: Float) {
@@ -1189,6 +1208,7 @@ fun announcerUpdate(
     boardPos: Vec2,
     boardSize: Float,
     elapsedTime: Float,
+    dt: Float,
 ): Boolean {
     animUpdate(announcer.anim, elapsedTime)
 
@@ -1207,6 +1227,25 @@ fun announcerUpdate(
 
     announcer.bannerWidth = screenWidth
     announcer.bannerY = announcer.center.y - Announcer.BANNER_HEIGHT / 2
+
+    for (particle in announcer.particles) {
+        if (!particle.spawned) {
+            particle.spawned = true
+
+            particle.pos.x = screenWidth * Random.nextFloat()
+
+            val yrange = Announcer.BANNER_HEIGHT - particle.height
+            val yoffset = Random.nextFloat() * yrange
+            particle.pos.y = announcer.bannerY + yoffset
+
+            particle.vel = screenWidth * 2
+        } else {
+            particle.pos.x += dt * particle.vel
+            if (particle.pos.x > screenWidth) {
+                particle.pos.x -= screenWidth
+            }
+        }
+    }
 
     return false
 }
@@ -1238,6 +1277,12 @@ fun announcerRender(announcer: Announcer) {
         val clr = Color.addAlpha(alpha, Color.purple)
         r.drawRect(x, y, width, height, clr)
         r.strokeRoundRect(x, y, width, height, 0f, shadowColor, STROKE_WIDTH)
+    }
+
+    // particle
+    for (p in announcer.particles) {
+        val alpha = kotlin.math.min(alpha, 50)
+        r.drawRect(p.pos.x, p.pos.y, p.width, p.height, Color.addAlpha(alpha, Color.white))
     }
 
     // text
@@ -1679,6 +1724,7 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 boardPos,
                 boardNode.width,
                 game.elapsedTime,
+                game.dt,
             )
             if (done) {
                 boardClearLines(game.board, game.elapsedTime)

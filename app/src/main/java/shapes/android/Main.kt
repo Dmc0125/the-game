@@ -240,7 +240,6 @@ class AppView(context: Context) : View(context) {
     var running = false
     val metrics = Metrics()
 
-
     fun resume() {
         lastFrameTime = System.nanoTime()
         running = true
