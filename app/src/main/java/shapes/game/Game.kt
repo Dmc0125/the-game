@@ -21,51 +21,6 @@ val colors: Array<Int> = arrayOf(
     Color.purple,
 )
 
-data class Animation<T>(
-    var current: T,
-    var duration: Float,
-    var delay: Float = 0f,
-    val lerp: (start: T, end: T, progress: Float) -> T,
-    var easing: AnimationEasing = AnimationEasing.Linear,
-) {
-    var animating = false
-    var animationStartTime = 0f
-    var animationStartValue: T = current
-    var animationEndValue: T = current
-
-    fun begin(elapsedTime: Float, endVal: T) {
-        if (animating) {
-            update(elapsedTime)
-        }
-
-        if (endVal == current) return
-
-        animationStartValue = current
-        animationEndValue = endVal
-        animationStartTime = elapsedTime
-        animating = true
-    }
-
-    fun update(elapsedTime: Float) {
-        if (!animating) return
-
-        val animatingTime = elapsedTime - animationStartTime
-        if (animatingTime < delay) {
-            return
-        }
-
-        val progress = (animatingTime - delay) / duration
-        if (progress >= 1f) {
-            current = animationEndValue
-            animating = false
-            return
-        }
-
-        val t = easeFunctions[easing]?.invoke(progress) ?: progress
-        current = lerp(animationStartValue, animationEndValue, t)
-    }
-}
-
 class Countdown(val textSizeStart: Float, textSizeEnd: Float) {
     val textSizeDiff = textSizeEnd - textSizeStart
     var text: String = ""
@@ -103,9 +58,15 @@ fun countdownUpdate(countdown: Countdown, layout: Layout, elapsedTime: Float): B
     return false
 }
 
-fun countdownRender(countdown: Countdown) {
+fun countdownRender(countdown: Countdown, gameBoardUi: Container) {
+    val r = Platform.renderer
+    r.save()
+    r.translate(gameBoardUi.posX, gameBoardUi.posY)
+
     val color = Color.argb((countdown.opacity * 255).toInt(), 255, 255, 255)
     textRender(countdown.text, countdown.textX, countdown.textY, color, countdown.textSize)
+
+    r.restore()
 }
 
 class CurrentShape(s: Shape, var initialized: Boolean = false) {
@@ -153,25 +114,29 @@ fun currentShapeSpawn(
 
     Platform.trace.beginSection("gameSpawnShape")
 
-    val newShape = CurrentShape(newShape, true)
+    val newCurrentShape = CurrentShape(newShape, true)
 
-    var availableCoords = currentShapeAvailableCoords(newShape, board.cells, 0)
-    if (availableCoords == null) availableCoords =
-        currentShapeAvailableCoords(newShape, board.cells, 1)
-    if (availableCoords == null) availableCoords =
-        currentShapeAvailableCoords(newShape, board.cells, 2)
-    if (availableCoords == null) availableCoords =
-        currentShapeAvailableCoords(newShape, board.cells, 3)
+    val s = newCurrentShape.shape
+    val oc = newCurrentShape.projectionCoords
+    val canPlace = currentShapeAvailableCoords(s, 0, oc, board.cells) != null ||
+            currentShapeAvailableCoords(s, 1, oc, board.cells) != null ||
+            currentShapeAvailableCoords(s, 2, oc, board.cells) != null ||
+            currentShapeAvailableCoords(s, 3, oc, board.cells) != null
 
     Platform.trace.endSection()
 
-    if (availableCoords == null) {
+    if (!canPlace) {
         gameOver = true
     } else {
-        currentShapeCheckOverlap(newShape, board.cells)
+        newCurrentShape.overlapping = currentShapeCheckOverlap(
+            oc,
+            s,
+            newCurrentShape.rotation,
+            board.cells,
+        )
     }
 
-    return Pair(gameOver, newShape)
+    return Pair(gameOver, newCurrentShape)
 }
 
 fun currentShapeRotate(shape: CurrentShape, elapsedTime: Float) {
@@ -233,17 +198,23 @@ fun currentShapeProjectionCoordsCurrent(shape: CurrentShape): Vec2 {
     }
 }
 
-fun currentShapeCheckOverlap(currentShape: CurrentShape, cells: Array<Cell>) {
-    currentShape.overlapping = false
-    val sr = getShapeRotation(currentShape.shape, currentShape.rotation)
+fun currentShapeCheckOverlap(
+    coords: Coords,
+    shape: ShapeReference,
+    rotation: Int,
+    cells: Array<Cell>,
+): Boolean {
+    var overlapping = false
+    val sr = getShapeRotation(shape, rotation)
     for (offset in sr.offsets) {
-        val cellCoords = currentShape.projectionCoords + offset
+        val cellCoords = coords + offset
         val idx = coordsToIdx(cellCoords.col, cellCoords.row)
         if (cells[idx].filled) {
-            currentShape.overlapping = true
+            overlapping = true
             break
         }
     }
+    return overlapping
 }
 
 fun currentShapeUpdateProjection(
@@ -252,6 +223,7 @@ fun currentShapeUpdateProjection(
     layout: Layout,
     cells: Array<Cell>,
     elapsedTime: Float,
+    forceUpdate: Boolean = false,
 ) {
     val boardInnerX = board.posX + layout.boardPadding
     val boardInnerY = board.posY + layout.boardPadding
@@ -294,27 +266,49 @@ fun currentShapeUpdateProjection(
         // row => center of the shape
 
         // correct inside the board
-        var originCol = snappedCol - sr.cols / 2 - sr.minCol
-        var originRow = snappedRow - sr.rows / 2 - sr.minRow
-
-        originCol = originCol.coerceIn(-sr.minCol, CELLS_COUNT - 1 - sr.maxCol)
-        originRow = originRow.coerceIn(-sr.minRow, CELLS_COUNT - 1 - sr.maxRow)
-
-        // origin col => left of the grid
-        // origin row => top of the grid
-
-        currentShapeBeginProjectionAnim(
-            currentShape,
-            Vec2(originCol.toFloat(), originRow.toFloat()),
-            elapsedTime,
+        val originCoords = Coords(
+            snappedCol - sr.cols / 2 - sr.minCol,
+            snappedRow - sr.rows / 2 - sr.minRow,
         )
 
-        currentShape.projectionCoords.col = originCol
-        currentShape.projectionCoords.row = originRow
+        originCoords.col = originCoords.col.coerceIn(-sr.minCol, CELLS_COUNT - 1 - sr.maxCol)
+        originCoords.row = originCoords.row.coerceIn(-sr.minRow, CELLS_COUNT - 1 - sr.maxRow)
 
-        currentShapeCheckOverlap(currentShape, cells)
+        val update = originCoords.col != currentShape.projectionCoords.col ||
+                originCoords.row != currentShape.projectionCoords.row ||
+                forceUpdate
 
-        currentShape.project = true
+        if (update) {
+            var overlapping = currentShapeCheckOverlap(
+                originCoords,
+                currentShape.shape,
+                currentShape.rotation,
+                cells,
+            )
+            if (overlapping) {
+                val availableCoords = currentShapeAvailableCoords(
+                    currentShape.shape,
+                    currentShape.rotation,
+                    originCoords,
+                    cells,
+                )
+                if (availableCoords != null) {
+                    originCoords.col = availableCoords.col
+                    originCoords.row = availableCoords.row
+                    overlapping = false
+                }
+            }
+
+            // origin col => left of the grid
+            // origin row => top of the grid
+
+            currentShapeBeginProjectionAnim(currentShape, originCoords.toVec2(), elapsedTime)
+
+            currentShape.projectionCoords.col = originCoords.col
+            currentShape.projectionCoords.row = originCoords.row
+            currentShape.overlapping = overlapping
+            currentShape.project = true
+        }
     } else {
         // snap to dock
 
@@ -326,13 +320,15 @@ fun currentShapeUpdateProjection(
     }
 }
 
-fun currentShapeAvailableCoords(currentShape: CurrentShape, cells: Array<Cell>, rot: Int = -1): Coords? {
+fun currentShapeAvailableCoords(
+    shapeReference: ShapeReference,
+    rotation: Int,
+    originCoords: Coords,
+    cells: Array<Cell>,
+): Coords? {
     Platform.trace.beginSection("availableCoords")
 
-    val shapeRotation = getShapeRotation(
-        currentShape.shape,
-        if (rot == -1) currentShape.rotation else rot,
-    )
+    val shapeRotation = getShapeRotation(shapeReference, rotation)
 
     // coords represent shape grid top left position, which can be negative, since
     // the cells inside the shape grid are offsets from top left
@@ -380,7 +376,7 @@ fun currentShapeAvailableCoords(currentShape: CurrentShape, cells: Array<Cell>, 
         queueEnd += 1
     }
 
-    enqueue(currentShape.projectionCoords.col, currentShape.projectionCoords.row)
+    enqueue(originCoords.col, originCoords.row)
 
     var resultCoords: Coords? = null
     search@ while (queueStart < queueEnd) {
@@ -424,6 +420,194 @@ fun currentShapeAvailableCoords(currentShape: CurrentShape, cells: Array<Cell>, 
 
     Platform.trace.endSection()
     return resultCoords
+}
+
+fun currentShapeRender(
+    currentShape: CurrentShape,
+    shapeDockUi: Container,
+    gameBoardUi: Container,
+    layout: Layout,
+    gameState: GameState,
+) {
+    val r = Platform.renderer
+    val shape = currentShape
+    val layout = layout
+
+    if (gameState == GameState.Placing) {
+        // projection
+        if (shape.project && shape.initialized) {
+            r.save()
+            r.translate(gameBoardUi.posX, gameBoardUi.posY)
+
+            val color = if (shape.overlapping) {
+                Color.addAlpha(200, Color.red)
+            } else {
+                shape.color
+            }
+
+            val currentProjectionCoords = currentShapeProjectionCoordsCurrent(shape)
+            val s = getShapeRotation(shape.shape, shape.rotation)
+
+            val leftCoords = currentProjectionCoords.x + s.minCol
+            val topCoords = currentProjectionCoords.y + s.minRow
+
+            val leftPos = layout.boardPadding + leftCoords * layout.cellSize
+            val topPos = layout.boardPadding + topCoords * layout.cellSize
+
+            val gridSize = SHAPE_CELLS_COUNT * layout.cellSize
+            val shapeCenterX = leftPos + s.cols * layout.cellSize / 2f
+            val shapeCenterY = topPos + s.rows * layout.cellSize / 2f
+
+            if (shape.rotationAnim.running) {
+                val currentOffset = animCurrent(
+                    shape.rotationAnim,
+                    shape.rotationCenterDiff,
+                    Vec2(0f, 0f),
+                    ::lerp,
+                    AnimationEasing.EaseOutSquared,
+                )
+
+                val currentOffsetX = currentOffset.x * layout.cellSize
+                val currentOffsetY = currentOffset.y * layout.cellSize
+                r.translate(currentOffsetX, currentOffsetY)
+
+                val currentRotation = animCurrent(
+                    shape.rotationAnim,
+                    shape.rotationFrom,
+                    shape.rotationTo,
+                    ::lerp,
+                    AnimationEasing.EaseInSquared,
+                )
+                shape.rotationCurrent = currentRotation
+
+                r.rotate(currentRotation, shapeCenterX, shapeCenterY)
+            }
+
+            for (offset in s.offsets) {
+                var x = leftPos + (offset.col - s.minCol) * layout.cellSize
+                var y = topPos + (offset.row - s.minRow) * layout.cellSize
+
+                x += layout.cellPadding
+                y += layout.cellPadding
+                var innerSize = layout.cellSize - layout.cellPadding * 2
+
+                // val projectionStrokeColor = Color.addAlpha(200, color)
+                val projectionBgColor = Color.addAlpha(200, color)
+
+                r.drawRoundRect(x, y, innerSize, innerSize, layout.cellRadius, projectionBgColor)
+
+                // val strokeWidth = 2f
+                // x += strokeWidth
+                // y += strokeWidth
+                // innerSize -= strokeWidth * 2
+
+                // r.strokeRoundRect(x, y, innerSize, innerSize, layout.cellRadius, projectionStrokeColor, strokeWidth)
+            }
+
+            r.restore()
+        }
+    }
+
+    // dragging and dock
+
+    val dockX = shapeDockUi.posX
+    val dockY = shapeDockUi.posY
+    val dockWidth = shapeDockUi.width
+    val dockHeight = shapeDockUi.height
+
+    val maxCellSize = 20f
+    val sr = getShapeRotation(shape.shape, shape.rotation)
+
+    if (shape.initialized) {
+        var left = 0f
+        var top = 0f
+
+        var cellSize = 0f
+        var cellPadding = 0f
+        var color = 0
+        var rotationPivot = Vec2(0f, 0f)
+
+        if (shape.inDock) {
+            val dockPaddingHorizontal = dockWidth * 0.1f
+            val dockPaddingVertical = dockHeight * 0.1f
+            cellSize = minOf(
+                (dockWidth - dockPaddingHorizontal * 2f) / sr.cols,
+                (dockHeight - dockPaddingVertical * 2f) / sr.rows,
+                maxCellSize,
+            )
+            cellPadding = cellSize * 0.05f
+            val totalShapeWidth = sr.cols * cellSize
+            val totalShapeHeight = sr.rows * cellSize
+
+            left = dockX + (dockWidth - totalShapeWidth) / 2f
+            top = dockY + (dockHeight - totalShapeHeight) / 2f
+
+            rotationPivot.x = left + totalShapeWidth / 2f
+            rotationPivot.y = top + totalShapeHeight / 2f
+
+            color = shape.color
+        } else {
+            cellSize = layout.cellSize
+            cellPadding = layout.cellPadding
+
+            val gridSize = SHAPE_CELLS_COUNT * cellSize
+
+            // move x to center and y to bottom
+            left = shape.dragPosition.x - (gridSize / 2f)
+            top = shape.dragPosition.y - gridSize
+
+            val totalShapeWidth = sr.cols * cellSize
+            val totalShapeHeight = sr.rows * cellSize
+
+            // center the shape within the grid
+            left += (gridSize - totalShapeWidth) / 2f
+            top += (gridSize - totalShapeHeight) / 2f
+
+            rotationPivot.x = left + totalShapeWidth / 2f
+            rotationPivot.y = top + totalShapeHeight / 2f
+
+            color = if (shape.overlapping) {
+                Color.addAlpha(200, Color.red)
+            } else {
+                shape.color
+            }
+        }
+
+        if (shape.rotationAnim.running) {
+            val currentRotation = animCurrent(
+                shape.rotationAnim,
+                shape.rotationFrom,
+                shape.rotationTo,
+                ::lerp,
+                AnimationEasing.EaseInSquared,
+            )
+            shape.rotationCurrent = currentRotation
+
+            r.save()
+            r.rotate(currentRotation, rotationPivot.x, rotationPivot.y)
+        }
+
+        val cellRadius = cellSize * CELL_RADIUS_FRACTION
+
+        for (offset in sr.offsets) {
+            val cellx = left + (offset.col - sr.minCol) * cellSize
+            val celly = top + (offset.row - sr.minRow) * cellSize
+
+            cellRender(
+                layout,
+                cellx,
+                celly,
+                cellSize,
+                cellPadding,
+                cellRadius,
+                color,
+            )
+        }
+
+        if (shape.rotationAnim.running) {
+            r.restore()
+        }
+    }
 }
 
 enum class LineClearPhase {
@@ -593,13 +777,11 @@ fun lineClearRender(lineClear: LineClear, layout: Layout, lineCoord: Int, board:
         Platform.renderer.scale(scale, scale, cellCenter.x, cellCenter.y)
 
         val innerCellSize = layout.cellSize - layout.cellPadding * 2
-        Platform.renderer.drawRoundRect(
-            cellCenter.x - innerCellSize / 2f,
-            cellCenter.y - innerCellSize / 2f,
-            innerCellSize,
-            innerCellSize,
-            layout.cellRadius,
-            color
+        cellRender(
+            layout,
+            cellPos.x,
+            cellPos.y,
+            color = color,
         )
 
         if (rotation != 0f) {
@@ -662,22 +844,26 @@ class Cell(val idx: Int) {
     var color: Int = 0
     var filled: Boolean = false
     var filledAt = 0f
-
-    // gravity
-    val anim = Anim()
 }
 
 class Board {
+    enum class State {
+        None,
+        Placing,
+        Clearing,
+    }
+
+    var state = State.None
     val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell(it) }
     val rowsClears = Array(CELLS_COUNT) { LineClear(true) }
     val colsClears = Array(CELLS_COUNT) { LineClear(false) }
+    val placingAnim = Anim()
 }
 
 fun boardPlaceShape(board: Board, currentShape: CurrentShape, elapsedTime: Float): Int {
     var count = 0
 
     val shapeRotation = getShapeRotation(currentShape.shape, currentShape.rotation)
-
     for (offset in shapeRotation.offsets) {
         val cellCoords = currentShape.projectionCoords + offset
         val idx = coordsToIdx(cellCoords.col, cellCoords.row)
@@ -689,6 +875,9 @@ fun boardPlaceShape(board: Board, currentShape: CurrentShape, elapsedTime: Float
 
         count += 1
     }
+
+    animBegin(board.placingAnim, 0.2f, elapsedTime)
+    board.state = Board.State.Placing
 
     return count
 }
@@ -798,6 +987,8 @@ fun boardFindFilledLines(board: Board): Int {
 }
 
 fun boardClearLines(board: Board, elapsedTime: Float) {
+    board.state = Board.State.Clearing
+
     for (rowIndex in board.rowsClears.indices) {
         val row = board.rowsClears[rowIndex]
         if (row.scheduled) {
@@ -820,73 +1011,142 @@ fun boardClearLines(board: Board, elapsedTime: Float) {
     }
 }
 
-data class BoardUpdateResult(
-    var allDone: Boolean,
-    var linePopped: Boolean,
-    var cellsFadedOut: Int,
-)
-
-fun boardUpdateClearingCells(board: Board, elapsedTime: Float): BoardUpdateResult {
-    val result = BoardUpdateResult(
-        allDone = true,
-        linePopped = false,
-        cellsFadedOut = 0,
-    )
-
-    for (row in board.rowsClears) {
-        if (row.phase != LineClearPhase.None) {
-            val lineResult = lineClearUpdate(row, elapsedTime)
-            if (!result.linePopped) {
-                result.linePopped = lineResult.popped
-            }
-            if (lineResult.cellsFadedOut > 0) {
-                result.cellsFadedOut += lineResult.cellsFadedOut
-            }
-            if (row.phase != LineClearPhase.None) {
-                result.allDone = false
-            }
-        }
-    }
-
-    for (col in board.colsClears) {
-        if (col.phase != LineClearPhase.None) {
-            val lineResult = lineClearUpdate(col, elapsedTime)
-            if (!result.linePopped) {
-                result.linePopped = lineResult.popped
-            }
-            if (lineResult.cellsFadedOut > 0) {
-                result.cellsFadedOut += lineResult.cellsFadedOut
-            }
-            if (col.phase != LineClearPhase.None) {
-                result.allDone = false
-            }
-        }
-    }
-
-    return result
+sealed interface BoardUpdateResult {
+    data object None : BoardUpdateResult
+    data class Placing(val linesFilled: Int) : BoardUpdateResult
+    data class Clearing(
+        var allDone: Boolean,
+        var linePopped: Boolean,
+        var cellsFadedOut: Int,
+    ) : BoardUpdateResult
 }
 
-fun boardRenderClearingAnimation(board: Board, layout: Layout) {
-    for (row in 0..<CELLS_COUNT) {
-        val rowLine = board.rowsClears[row]
-        if (rowLine.phase != LineClearPhase.None) {
-            lineClearRender(rowLine, layout, row, board)
+fun boardUpdate(board: Board, elapsedTime: Float): BoardUpdateResult {
+    return when (board.state) {
+        Board.State.Placing -> {
+            animUpdate(board.placingAnim, elapsedTime)
+
+            val placingAnimDone = !board.placingAnim.running
+            if (placingAnimDone) {
+                board.state = Board.State.None
+                val linesCleared = boardFindFilledLines(board)
+                BoardUpdateResult.Placing(linesCleared)
+            } else {
+                BoardUpdateResult.None
+            }
+        }
+
+        Board.State.Clearing -> {
+            val result = BoardUpdateResult.Clearing(
+                allDone = true,
+                linePopped = false,
+                cellsFadedOut = 0,
+            )
+
+            for (row in board.rowsClears) {
+                if (row.phase != LineClearPhase.None) {
+                    val lineResult = lineClearUpdate(row, elapsedTime)
+                    if (!result.linePopped) {
+                        result.linePopped = lineResult.popped
+                    }
+                    if (lineResult.cellsFadedOut > 0) {
+                        result.cellsFadedOut += lineResult.cellsFadedOut
+                    }
+                    if (row.phase != LineClearPhase.None) {
+                        result.allDone = false
+                    }
+                }
+            }
+
+            for (col in board.colsClears) {
+                if (col.phase != LineClearPhase.None) {
+                    val lineResult = lineClearUpdate(col, elapsedTime)
+                    if (!result.linePopped) {
+                        result.linePopped = lineResult.popped
+                    }
+                    if (lineResult.cellsFadedOut > 0) {
+                        result.cellsFadedOut += lineResult.cellsFadedOut
+                    }
+                    if (col.phase != LineClearPhase.None) {
+                        result.allDone = false
+                    }
+                }
+            }
+
+            if (result.allDone) {
+                board.state = Board.State.None
+            }
+
+            result
+        }
+
+        Board.State.None -> BoardUpdateResult.None
+    }
+}
+
+fun boardRender(board: Board, gameBoardUi: Container, layout: Layout) {
+    val r = Platform.renderer
+    r.save()
+
+    val boardCenterX = gameBoardUi.posX + gameBoardUi.width / 2f
+    val boardCenterY = gameBoardUi.posY + gameBoardUi.height / 2f
+
+    val placingAnimRunning = board.placingAnim.running
+
+    if (placingAnimRunning) {
+        val scale = keyframeCurrent(board.placingAnim, shrinkKeyframe)
+        r.scale(scale, scale, boardCenterX, boardCenterY)
+    }
+
+    r.drawRoundRect(
+        gameBoardUi.posX, gameBoardUi.posY,
+        gameBoardUi.width, gameBoardUi.height,
+        UI_RADIUS, Color.ink,
+    )
+
+    r.translate(gameBoardUi.posX, gameBoardUi.posY)
+
+    // board cells
+    for (row in 0 until CELLS_COUNT) {
+        val layout = layout
+        val rowy = layout.boardPadding + row * layout.cellSize
+        for (col in 0 until CELLS_COUNT) {
+            val x = layout.boardPadding + col * layout.cellSize
+            var y = rowy
+
+            val idx = coordsToIdx(col, row)
+            val cell = board.cells[idx]
+
+            if (cell.filled) {
+                cellRender(layout, x, y, color = cell.color)
+            }
         }
     }
 
-    for (col in 0..<CELLS_COUNT) {
-        val colLine = board.colsClears[col]
-        if (colLine.phase != LineClearPhase.None) {
-            lineClearRender(colLine, layout, col, board)
+    if (board.state == Board.State.Clearing) {
+        for (row in 0..<CELLS_COUNT) {
+            val rowLine = board.rowsClears[row]
+            if (rowLine.phase != LineClearPhase.None) {
+                lineClearRender(rowLine, layout, row, board)
+            }
+        }
+
+        for (col in 0..<CELLS_COUNT) {
+            val colLine = board.colsClears[col]
+            if (colLine.phase != LineClearPhase.None) {
+                lineClearRender(colLine, layout, col, board)
+            }
         }
     }
+
+    r.restore()
 }
 
 class Announcer {
     companion object {
-        const val TEXT_SIZE = 32f
+        const val TEXT_SIZE = 48f
         const val BANNER_HEIGHT = TEXT_SIZE + 20f + 20f
-        const val DURATION = 0.5f
+        const val DURATION = 0.7f
 
         val scaleFrames = arrayOf(
             Keyframe(0.2f, 0.5f, 1.2f, AnimationEasing.EaseOutSquared),
@@ -975,7 +1235,7 @@ fun announcerRender(announcer: Announcer) {
         val width = announcer.bannerWidth + 600f
         val height = Announcer.BANNER_HEIGHT
 
-        val clr = Color.addAlpha(alpha, Color.blue)
+        val clr = Color.addAlpha(alpha, Color.purple)
         r.drawRect(x, y, width, height, clr)
         r.strokeRoundRect(x, y, width, height, 0f, shadowColor, STROKE_WIDTH)
     }
@@ -984,7 +1244,9 @@ fun announcerRender(announcer: Announcer) {
     run {
         val text = announcer.text
         val pos = announcer.pos
-        textRender(text, pos.x, pos.y, shadowColor, Announcer.TEXT_SIZE)
+        textRender(text, pos.x + SHADOW_OFFSET, pos.y + SHADOW_OFFSET, shadowColor, Announcer.TEXT_SIZE)
+        textRender(text, pos.x, pos.y, Color.addAlpha(alpha, Color.yellow), Announcer.TEXT_SIZE)
+        textStroke(text, pos.x, pos.y, STROKE_WIDTH, shadowColor, Announcer.TEXT_SIZE)
     }
 
     r.restore()
@@ -1018,16 +1280,9 @@ fun coordsToPos(layout: Layout, coords: Vec2): Vec2 {
 
 sealed interface GameState {
     data object Countdown : GameState
-
     data object Placing : GameState
-    data class PlacingAnimation(val forced: Boolean) : GameState
-
-    data class ClearBoard(val forced: Boolean) : GameState
+    data object Board : GameState
     data object Announcer : GameState
-    data object ClearingAnimation : GameState
-
-    // data object ApplyingGravity : GameState
-    // data object GravityAnimation : GameState
 }
 
 enum class GameScreen {
@@ -1078,7 +1333,6 @@ class GameContext {
     // anims
 
     val screenShakeAnim = Anim()
-    val placeAnim = Anim()
 
     val scoreAnim = Anim()
     var scoreCurrent = 0f
@@ -1099,8 +1353,28 @@ fun gameAnimateScore(game: GameContext, scoreChange: Int) {
 }
 
 fun gamePlaceShape(game: GameContext, forced: Boolean) {
+    var forcedPlacement = false
+
+    if (forced) {
+        val availableCoords = currentShapeAvailableCoords(
+            game.currentShape.shape,
+            game.currentShape.rotation,
+            game.currentShape.projectionCoords,
+            game.board.cells,
+        )
+        if (availableCoords == null) {
+            game.screen = GameScreen.GameOver
+            return
+        }
+
+        if (availableCoords != game.currentShape.projectionCoords) {
+            game.currentShape.projectionCoords = availableCoords
+            forcedPlacement = true
+        }
+    }
+
     var cellCount = boardPlaceShape(game.board, game.currentShape, game.elapsedTime)
-    val scoreChange = if (forced) {
+    val scoreChange = if (forcedPlacement) {
         cellCount * -10
     } else {
         val streakMult = if (game.clearStreak > 0) game.clearStreak else 1
@@ -1115,30 +1389,6 @@ fun gamePlaceShape(game: GameContext, forced: Boolean) {
     game.shapesPlaced += 1
     game.phase = game.shapesPlaced / 10
     game.roundEnd = game.elapsedTime
-
-    animBegin(game.placeAnim, 0.2f, game.elapsedTime)
-}
-
-fun gameForcePlaceShape(game: GameContext) {
-    Platform.trace.beginSection("forcePlace")
-
-    val availableCoords = currentShapeAvailableCoords(game.currentShape, game.board.cells)
-    if (availableCoords == null) {
-        Platform.trace.endSection()
-        game.screen = GameScreen.GameOver
-        return
-    }
-
-    Platform.trace.endSection()
-
-    var forced = false
-    if (availableCoords != game.currentShape.projectionCoords) {
-        game.currentShape.projectionCoords = availableCoords
-        forced = true
-    }
-
-    gamePlaceShape(game, forced)
-    game.state = GameState.PlacingAnimation(forced)
 }
 
 fun coordsToIdx(col: Int, row: Int): Int {
@@ -1207,13 +1457,13 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
             }
         } else if (game.screen == GameScreen.Playing) {
             val currentShape = game.currentShape
-            if (currentShape.initialized) {
+            if (game.state == GameState.Placing && currentShape.initialized) {
                 // place
                 var placed = false
                 if (uiButtonReleased(game.ui, "button_place")) {
                     if (!currentShape.overlapping) {
-                        val linesCleared = gamePlaceShape(game, false)
-                        game.state = GameState.PlacingAnimation(false)
+                        gamePlaceShape(game, false)
+                        game.state = GameState.Board
                         placed = true
                     }
                 }
@@ -1230,7 +1480,8 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                             board,
                             game.layout,
                             game.board.cells,
-                            game.elapsedTime
+                            game.elapsedTime,
+                            true,
                         )
                     }
 
@@ -1317,7 +1568,7 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 game.nextShape = shapesBagPeek(game.shapesBag)
             } else {
                 if (game.roundStart + game.roundDuration < game.elapsedTime) {
-                    gameForcePlaceShape(game)
+                    gamePlaceShape(game, true)
                 }
 
                 animUpdate(game.currentShape.projectionAnim, game.elapsedTime)
@@ -1325,71 +1576,95 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
             }
         }
 
-        (game.state as? GameState.PlacingAnimation)?.let { gs ->
-            animUpdate(game.placeAnim, game.elapsedTime)
-            if (!game.placeAnim.running) {
-                game.state = GameState.ClearBoard(gs.forced)
-            }
-        }
+        // ----------
+        // board upate
 
-        // turn end
+        when (val r = boardUpdate(game.board, game.elapsedTime)) {
+            is BoardUpdateResult.None -> Unit
 
-        (game.state as? GameState.ClearBoard)?.let { gs ->
-            val linesCleared = boardFindFilledLines(game.board)
+            is BoardUpdateResult.Placing -> {
+                val linesCleared = r.linesFilled
 
-            if (linesCleared > 0) {
-                game.noClearStreak = 0
+                if (linesCleared > 0) {
+                    game.noClearStreak = 0
 
-                if (linesCleared > 1) {
-                    game.comboMultiplier += linesCleared
-                    game.queuedComboMultiplierUpdates += linesCleared
-                }
+                    if (linesCleared > 1) {
+                        game.comboMultiplier += linesCleared
+                        game.queuedComboMultiplierUpdates += linesCleared
+                    }
 
-                game.clearStreak += 1
-                game.clearStreakMultiplierIncreased = true
+                    game.clearStreak += 1
+                    game.clearStreakMultiplierIncreased = true
 
-                if (linesCleared == 1 && game.clearStreak > 1) {
-                    game.queuedClearStreakMultiplierUpdates += 1
-                }
+                    if (linesCleared == 1 && game.clearStreak > 1) {
+                        game.queuedClearStreakMultiplierUpdates += 1
+                    }
 
-                var totalMultiplier = game.comboMultiplier
-                if (game.clearStreak > 0) {
-                    totalMultiplier *= game.clearStreak
-                }
+                    var totalMultiplier = game.comboMultiplier
+                    if (game.clearStreak > 0) {
+                        totalMultiplier *= game.clearStreak
+                    }
 
-                val scoreUpdates = linesCleared * CELLS_COUNT
-                val scoreChange = scoreUpdates * CELL_CLEAR_REWARD * totalMultiplier
-                game.score += scoreChange
+                    val scoreUpdates = linesCleared * CELLS_COUNT
+                    val scoreChange = scoreUpdates * CELL_CLEAR_REWARD * totalMultiplier
+                    game.score += scoreChange
 
-                if (linesCleared > 1) {
-                    game.state = GameState.Announcer
-                    announcerAnnounce(game.announcer, linesCleared, game.elapsedTime)
+                    if (linesCleared > 1) {
+                        game.state = GameState.Announcer
+                        announcerAnnounce(game.announcer, linesCleared, game.elapsedTime)
+                    } else {
+                        boardClearLines(game.board, game.elapsedTime)
+                    }
                 } else {
-                    boardClearLines(game.board, game.elapsedTime)
-                    game.state = GameState.ClearingAnimation
-                }
-            } else {
-                if (game.noClearStreak >= 5 && game.comboMultiplier > 1) {
-                    game.comboMultiplier -= 1
-                    game.comboMultiplierVisual -= 1
+                    if (game.noClearStreak >= 5 && game.comboMultiplier > 1) {
+                        game.comboMultiplier -= 1
+                        game.comboMultiplierVisual -= 1
 
-                    game.comboMultiplierIncreased = false
+                        game.comboMultiplierIncreased = false
+                        animBegin(game.comboMultiplierAnim, 0.2f, game.elapsedTime)
+                    }
+
+                    if (game.noClearStreak >= 3 && game.clearStreak > 0) {
+                        game.clearStreak = 0
+                        game.clearStreakMultiplierIncreased = false
+                        animBegin(game.clearStreakMultiplierAnim, 0.2f, game.elapsedTime)
+                    }
+
+                    game.noClearStreak += 1
+                    game.state = GameState.Placing
+                }
+            }
+
+            is BoardUpdateResult.Clearing -> {
+                if (r.linePopped && game.queuedComboMultiplierUpdates > 0) {
+                    game.queuedComboMultiplierUpdates -= 1
+                    game.comboMultiplierVisual += 1
+                    game.comboMultiplierIncreased = true
                     animBegin(game.comboMultiplierAnim, 0.2f, game.elapsedTime)
+                    animBegin(game.screenShakeAnim, 0.1f, game.elapsedTime)
                 }
 
-                if (game.noClearStreak >= 3 && game.clearStreak > 0) {
-                    game.clearStreak = 0
-                    game.clearStreakMultiplierIncreased = false
+                if (r.linePopped && game.queuedClearStreakMultiplierUpdates > 0) {
+                    game.queuedClearStreakMultiplierUpdates -= 1
                     animBegin(game.clearStreakMultiplierAnim, 0.2f, game.elapsedTime)
+                    if (!game.screenShakeAnim.running) {
+                        animBegin(game.screenShakeAnim, 0.1f, game.elapsedTime)
+                    }
                 }
 
-                game.noClearStreak += 1
+                if (r.cellsFadedOut > 0) {
+                    var totalMultiplier = game.comboMultiplier
+                    if (game.clearStreak > 0) {
+                        totalMultiplier *= game.clearStreak
+                    }
 
-                // if (gs.applyGravity) {
-                //     game.state = GameState.ApplyingGravity
-                // } else {
-                game.state = GameState.Placing
-                // }
+                    val totalChange = r.cellsFadedOut * CELL_CLEAR_REWARD * totalMultiplier
+                    gameAnimateScore(game, totalChange)
+                }
+
+                if (r.allDone) {
+                    game.state = GameState.Placing
+                }
             }
         }
 
@@ -1406,584 +1681,19 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 game.elapsedTime,
             )
             if (done) {
-                game.state = GameState.ClearingAnimation
                 boardClearLines(game.board, game.elapsedTime)
+                game.state = GameState.Board
             }
         }
-
-        // cells clearing animation
-
-        (game.state as? GameState.ClearingAnimation)?.let { gs ->
-            val result = boardUpdateClearingCells(game.board, game.elapsedTime)
-
-            if (result.linePopped && game.queuedComboMultiplierUpdates > 0) {
-                game.queuedComboMultiplierUpdates -= 1
-                game.comboMultiplierVisual += 1
-                game.comboMultiplierIncreased = true
-                animBegin(game.comboMultiplierAnim, 0.2f, game.elapsedTime)
-                animBegin(game.screenShakeAnim, 0.1f, game.elapsedTime)
-            }
-
-            if (result.linePopped && game.queuedClearStreakMultiplierUpdates > 0) {
-                game.queuedClearStreakMultiplierUpdates -= 1
-                animBegin(game.clearStreakMultiplierAnim, 0.2f, game.elapsedTime)
-                if (!game.screenShakeAnim.running) {
-                    animBegin(game.screenShakeAnim, 0.1f, game.elapsedTime)
-                }
-            }
-
-            if (result.cellsFadedOut > 0) {
-                var totalMultiplier = game.comboMultiplier
-                if (game.clearStreak > 0) {
-                    totalMultiplier *= game.clearStreak
-                }
-
-                val totalChange = result.cellsFadedOut * CELL_CLEAR_REWARD * totalMultiplier
-                gameAnimateScore(game, totalChange)
-            }
-
-            if (result.allDone) {
-                // if (gs.applyGravity) {
-                //     game.state = GameState.ApplyingGravity
-                // } else {
-                game.state = GameState.Placing
-                // }
-            }
-        }
-
 
         // screen shake
 
         if (game.screenShakeAnim.running) {
             animUpdate(game.screenShakeAnim, game.elapsedTime)
         }
-
-        // if (game.state == GameState.ApplyingGravity) {
-        //     var applied = false
-
-        //     for (row in CELLS_COUNT - 2 downTo 0) {
-        //         for (col in 0..<CELLS_COUNT) {
-        //             val newIdx = coordsToIdx(col, row + 1)
-        //             val newCell = game.board.cells[newIdx]
-        //             if (newCell.filled) {
-        //                 continue
-        //             }
-
-        //             val currentIdx = coordsToIdx(col, row)
-        //             val currentCell = game.board.cells[currentIdx]
-        //             if (!currentCell.filled || currentCell.color != Color.blue) {
-        //                 continue
-        //             }
-
-        //             currentCell.filled = false
-
-        //             newCell.filled = true
-        //             newCell.color = currentCell.color
-        //             newCell.filledAt = currentCell.filledAt
-        //             animBegin(newCell.anim, 0.2f, game.elapsedTime)
-
-        //             applied = true
-        //         }
-        //     }
-
-        //     if (applied) {
-        //         game.state = GameState.GravityAnimation
-        //     } else {
-        //     game.state = GameState.Placing
-        //     }
-        // }
     }
 
-    // if (game.state == GameState.GravityAnimation) {
-    //     var allDone = true
-
-    //     for (cell in game.board.cells) {
-    //         if (cell.anim.running) {
-    //             animUpdate(cell.anim, game.elapsedTime)
-    //             allDone = allDone && !cell.anim.running
-    //         }
-    //     }
-
-    //     if (allDone) {
-    //         game.state = GameState.ClearBoard(false, false)
-    //     }
-    // }
-
-    // -----------------
-    // update layout
-
-    val ui = game.ui
-
-    game.rootModifiers.ui = UiModifier.Box(Color.vanilla)
-    uiRootInit(ui, game.elapsedTime, game.rootModifiers)
-
-    if (game.screen == GameScreen.Start) {
-        uiColBegin(
-            ui,
-            Modifiers(width = Size.FillMax, height = Size.FillMax),
-            verticalAlignment = Alignment.End,
-        )
-
-        // start button
-        run {
-            val m = Modifiers(width = Size.FillMax)
-            mPaddingHorizontal(m, 24f)
-            mPaddingVertical(m, 20f)
-            m.ui = UiModifier.Button(Color.blue)
-            uiRowBegin(ui, m, id = "start_button")
-
-            uiText(
-                ui,
-                Modifiers(
-                    ui = UiModifier.Text(
-                        text = "start",
-                        textSize = 20f,
-                        textColor = Color.white,
-                    ),
-                ),
-            )
-
-            uiRowEnd(ui)
-        }
-
-        uiColEnd(ui)
-    } else if (game.screen == GameScreen.Playing) {
-        fun verticalSpacer(size: Float = 30f) {
-            uiRowBegin(ui, Modifiers(height = Size.Abs(size)))
-            uiRowEnd(ui)
-        }
-
-        fun horizontalSpacer(size: Float = 30f) {
-            uiRowBegin(ui, Modifiers(width = Size.Abs(size)))
-            uiRowEnd(ui)
-        }
-
-        // --------------
-        // top bar
-        uiRowBegin(ui, Modifiers(width = Size.FillMax))
-
-        run {
-            val topBarWidth = game.layout.boardSize
-            var topBarHeight = 0f
-            val scoreBoardWidth = topBarWidth * 0.7f
-            val spacing = topBarWidth * 0.05f
-
-            run {
-                // score
-
-                val m = Modifiers(
-                    width = Size.Abs(scoreBoardWidth),
-                    paddingTop = 10f,
-                    ui = UiModifier.Card(Color.blue),
-                )
-                mPaddingHorizontal(m, 20f)
-                uiColBegin(ui, m)
-                topBarHeight += m.paddingTop
-
-                run {
-                    val uim = UiModifier.Text(text = "score", textSize = 8f, textColor = Color.black)
-                    uiText(ui, Modifiers(ui = uim))
-                    topBarHeight += uim.textSize
-                }
-
-                run {
-                    animUpdate(game.scoreAnim, game.elapsedTime)
-                    game.scoreCurrent = animCurrent(
-                        game.scoreAnim,
-                        game.scoreFrom,
-                        game.scoreTarget,
-                        ::lerp,
-                        AnimationEasing.EaseOutSquared,
-                    )
-
-                    val uim = UiModifier.Text(
-                        text = "%06d".format(kotlin.math.round(game.scoreCurrent).toInt()),
-                        textSize = 24f,
-                        textColor = Color.black,
-                    )
-                    val m = Modifiers(ui = uim)
-                    mPaddingVertical(m, 14f)
-                    uiText(ui, m)
-
-                    topBarHeight += uim.textSize + m.paddingTop + m.paddingBottom
-                }
-
-                uiColEnd(ui)
-            }
-
-            horizontalSpacer(spacing)
-
-            // mutlipliers
-            uiColBegin(ui, Modifiers(Size.FillMax, Size.Abs(topBarHeight)))
-
-            run {
-                val blockHeight = topBarHeight * 0.42f
-                val spacing = topBarHeight - (blockHeight * 2f)
-                val radius = 13f
-
-                var clearStreakScale = 1f
-                if (game.clearStreakMultiplierAnim.running) {
-                    animUpdate(game.clearStreakMultiplierAnim, game.elapsedTime)
-                    if (game.clearStreakMultiplierIncreased) {
-                        clearStreakScale = keyframeCurrent(game.clearStreakMultiplierAnim, popKeyframe)
-                    } else {
-                        clearStreakScale = keyframeCurrent(game.clearStreakMultiplierAnim, shrinkKeyframe)
-                    }
-                }
-
-                uiRowBegin(
-                    ui,
-                    Modifiers(
-                        Size.FillMax,
-                        Size.Abs(blockHeight),
-                        scaleX = clearStreakScale,
-                        scaleY = clearStreakScale,
-                        ui = UiModifier.Card(Color.yellow, radius),
-                    ),
-                    horizontalAlignment = Alignment.Center,
-                )
-                uiColBegin(ui, Modifiers(height = Size.FillMax), verticalAlignment = Alignment.Center)
-                uiText(
-                    ui, Modifiers(
-                        ui = UiModifier.Text(
-                            text = "${game.clearStreak}x streak",
-                            textSize = 8f,
-                            textColor = Color.black,
-                        )
-                    )
-                )
-                uiColEnd(ui)
-                uiRowEnd(ui)
-
-                verticalSpacer(spacing)
-
-                var multiplierScale = 1f
-                if (game.comboMultiplierAnim.running) {
-                    animUpdate(game.comboMultiplierAnim, game.elapsedTime)
-                    if (game.comboMultiplierIncreased) {
-                        multiplierScale = keyframeCurrent(game.comboMultiplierAnim, popKeyframe)
-                    } else {
-                        multiplierScale = keyframeCurrent(game.comboMultiplierAnim, shrinkKeyframe)
-                    }
-                }
-
-                uiRowBegin(
-                    ui,
-                    Modifiers(
-                        Size.FillMax,
-                        Size.Abs(blockHeight),
-                        scaleX = multiplierScale,
-                        scaleY = multiplierScale,
-                        ui = UiModifier.Card(Color.red, radius),
-                    ),
-                    horizontalAlignment = Alignment.Center,
-                )
-                uiColBegin(ui, Modifiers(height = Size.FillMax), verticalAlignment = Alignment.Center)
-                uiText(
-                    ui, Modifiers(
-                        ui = UiModifier.Text(
-                            text = "${game.comboMultiplierVisual}x combo",
-                            textSize = 8f,
-                            textColor = Color.black,
-                        )
-                    )
-                )
-                uiColEnd(ui)
-                uiRowEnd(ui)
-            }
-
-            uiColEnd(ui)
-        }
-
-        uiRowEnd(ui)
-
-        verticalSpacer()
-
-        // --------------
-        // status bar
-
-        run {
-            val statusBarWidth = game.layout.boardSize
-            val statusBarHeight = 12f
-
-            val remainingTimeWidth = 40f
-            val phaseWidth = 60f
-            val timerBarWidth = statusBarWidth - remainingTimeWidth - phaseWidth
-
-            uiRowBegin(ui, Modifiers(width = Size.FillMax, height = Size.Abs(statusBarHeight)))
-
-            run {
-                // remainig time
-                var remainingTime = 0f
-                var progress = 0f
-
-                if (game.state == GameState.Placing) {
-                    val elapsed = game.elapsedTime - game.roundStart
-                    remainingTime = game.roundDuration - elapsed
-                    progress = remainingTime / game.roundDuration
-                } else if (game.state != GameState.Countdown) {
-                    val elapsed = game.roundEnd - game.roundStart
-                    remainingTime = game.roundDuration - elapsed
-                    progress = remainingTime / game.roundDuration
-                }
-
-                run {
-                    uiColBegin(ui, Modifiers(height = Size.FillMax), verticalAlignment = Alignment.Center)
-                    val m = Modifiers(
-                        ui = UiModifier.Text(
-                            text = "%02.01fs".format(remainingTime),
-                            textSize = 8f,
-                            textColor = Color.black,
-                        ),
-                        width = Size.Abs(remainingTimeWidth)
-                    )
-                    uiText(ui, m)
-                    uiColEnd(ui)
-                }
-
-                // bar
-
-                run {
-                    uiColBegin(
-                        ui,
-                        Modifiers(Size.Abs(timerBarWidth), Size.Abs(statusBarHeight)),
-                        verticalAlignment = Alignment.Center
-                    )
-
-                    val m = Modifiers(width = Size.FillMax, height = Size.Abs(12f))
-                    mPaddingHorizontal(m, 3f)
-                    mPaddingVertical(m, 3f)
-                    m.ui = UiModifier.Box(bgColor = Color.ink, radius = 6f)
-                    uiRowBegin(ui, m)
-
-                    run {
-                        val t = run {
-                            if (progress > 0.5f) {
-                                return@run 0f
-                            }
-
-                            val p = progress / 0.5f
-
-                            val waves = 7f
-                            val acceleration = 5f
-                            val phase = 2f * kotlin.math.PI * waves * (1f - p).pow(acceleration)
-                            val o = 1f - kotlin.math.cos(phase).toFloat()
-                            o / 2
-                        }
-                        val color = lerpColor(Color.lime, Color.red, t)
-
-                        // inner bar
-                        uiRowBegin(
-                            ui,
-                            Modifiers(
-                                Size.FillMaxF(progress),
-                                Size.FillMax,
-                                ui = UiModifier.Box(bgColor = color, radius = 3f),
-                            ),
-                        )
-                        uiRowEnd(ui)
-                    }
-
-                    uiRowEnd(ui)
-                    uiColEnd(ui)
-                }
-
-                // phase
-
-                run {
-                    uiColBegin(
-                        ui,
-                        Modifiers(width = Size.Abs(phaseWidth), height = Size.Abs(statusBarHeight)),
-                        verticalAlignment = Alignment.Center,
-                    )
-                    uiRowBegin(
-                        ui,
-                        Modifiers(Size.Abs(phaseWidth)),
-                        horizontalAlignment = Alignment.End,
-                    )
-
-                    uiText(
-                        ui,
-                        Modifiers(
-                            ui = UiModifier.Text(
-                                text = "Phase ${game.phase}",
-                                textSize = 8f,
-                                textColor = Color.black,
-                            )
-                        ),
-                    )
-
-                    uiRowEnd(ui)
-                    uiColEnd(ui)
-                }
-            }
-
-            uiRowEnd(ui)
-        }
-
-        verticalSpacer()
-
-        // --------------
-        // game board
-
-        uiRowBegin(
-            ui,
-            Modifiers(
-                width = Size.Abs(game.layout.boardSize),
-                height = Size.Abs(game.layout.boardSize),
-            ),
-            id = "game_board",
-        )
-        uiRowEnd(ui)
-
-        // --------------
-        // bottom bar
-
-        uiColBegin(ui, Modifiers(Size.FillMax, Size.FillMax), verticalAlignment = Alignment.End)
-        uiRowBegin(
-            ui,
-            Modifiers(width = Size.FillMax, height = Size.FillMaxF(0.7f)),
-            horizontalAlignment = Alignment.Center,
-        )
-
-        run {
-            val width = game.layout.boardSize
-            val componentSize = width * 0.3f
-            val spacing = (width - (componentSize * 3f)) / 2f
-
-            // next shape
-            uiRowBegin(
-                ui,
-                Modifiers(
-                    width = Size.Abs(componentSize),
-                    height = Size.Abs(componentSize),
-                ),
-                Alignment.Start,
-            )
-
-            run {
-                val dockSize = 0.8f
-
-                uiColBegin(
-                    ui,
-                    Modifiers(
-                        width = Size.FillMaxF(dockSize),
-                        height = Size.FillMax,
-                    ),
-                    Alignment.Center,
-                )
-
-                val m = Modifiers(Size.FillMax, Size.FillMaxF(dockSize))
-                mPaddingHorizontal(m, 10f)
-                mPaddingVertical(m, 10f)
-                m.ui = UiModifier.Card(bgColor = Color.ink, radius = 20f)
-                uiColBegin(ui, m)
-
-                run {
-                    uiText(
-                        ui,
-                        Modifiers(
-                            ui = UiModifier.Text(
-                                text = "Next",
-                                textSize = 8f,
-                                textColor = Color.white,
-                            )
-                        ),
-                    )
-
-                    verticalSpacer(8f)
-
-                    uiColBegin(
-                        ui,
-                        Modifiers(Size.FillMax, Size.FillMax),
-                        Alignment.Center,
-                        id = "next_shape_dock",
-                    )
-                    uiColEnd(ui)
-                }
-
-                uiColEnd(ui)
-                uiColEnd(ui)
-            }
-
-            uiRowEnd(ui)
-
-            horizontalSpacer(spacing)
-
-            // current shape
-            val m = Modifiers(
-                width = Size.Abs(componentSize),
-                height = Size.Abs(componentSize),
-                ui = UiModifier.Card(Color.ink),
-            )
-            uiRowBegin(ui, m, id = "current_shape")
-            uiRowEnd(ui)
-
-            horizontalSpacer(spacing)
-
-            // controls
-            uiRowBegin(
-                ui,
-                Modifiers(width = Size.Abs(componentSize), height = Size.Abs(componentSize)),
-                horizontalAlignment = Alignment.End,
-            )
-
-            run {
-                uiColBegin(ui, Modifiers(width = Size.FillMaxF(0.8f)))
-
-                val buttonHeight = componentSize * 0.4f
-                val spacing = (componentSize - buttonHeight * 2f)
-                val textSize = 10f
-                val paddingTop = (buttonHeight - textSize) / 2f
-
-                uiRowBegin(
-                    ui,
-                    Modifiers(
-                        Size.FillMax,
-                        Size.Abs(buttonHeight),
-                        paddingTop = paddingTop,
-                        ui = UiModifier.Button(bgColor = Color.white)
-                    ),
-                    Alignment.Center,
-                    id = "button_rotate",
-                )
-                uiText(
-                    ui,
-                    Modifiers(ui = UiModifier.Text(text = "R", textSize = textSize, textColor = Color.ink)),
-                )
-                uiRowEnd(ui)
-
-                verticalSpacer(spacing)
-
-                uiRowBegin(
-                    ui,
-                    Modifiers(
-                        Size.FillMax,
-                        Size.Abs(buttonHeight),
-                        paddingTop = paddingTop,
-                        ui = UiModifier.Button(bgColor = Color.white)
-                    ),
-                    Alignment.Center,
-                    id = "button_place",
-                )
-                uiText(
-                    ui,
-                    Modifiers(ui = UiModifier.Text(text = "Place", textSize = textSize, textColor = Color.ink)),
-                    id = "button_place_text"
-                )
-                uiRowEnd(ui)
-
-                uiColEnd(ui)
-            }
-
-            uiRowEnd(ui)
-        }
-
-        uiRowEnd(ui)
-        uiColEnd(ui)
-    }
-
-    uiRootEnd(ui)
+    buildHUD(game)
 }
 
 fun gameRender(game: GameContext) {
@@ -1991,9 +1701,6 @@ fun gameRender(game: GameContext) {
 
     r.save()
     r.scale(game.scale, game.scale)
-
-    // ------------
-    // HUD
 
     if (game.screenShakeAnim.running) {
         val gameBoard = uiGetNode(game.ui, "game_board")
@@ -2006,9 +1713,11 @@ fun gameRender(game: GameContext) {
             Keyframe(1f, 0.5f, 0f, AnimationEasing.Linear),
         )
         val angle = keyframeCurrent(game.screenShakeAnim, keyframes)
-        r.save()
         r.rotate(angle, boardCenterX, boardCenterY)
     }
+
+    // ------------
+    // HUD
 
     uiRender(game.ui, game.ui.root)
 
@@ -2016,293 +1725,50 @@ fun gameRender(game: GameContext) {
     // Game
 
     if (game.screen == GameScreen.Playing) {
-        run {
-            // game
-            val gameBoard = uiGetNode(game.ui, "game_board")
-            val boardCenterX = gameBoard.posX + gameBoard.width / 2f
-            val boardCenterY = gameBoard.posY + gameBoard.height / 2f
+        val gameBoardUi = uiGetNode(game.ui, "game_board")
+        boardRender(game.board, gameBoardUi, game.layout)
 
-            if (game.state is GameState.PlacingAnimation) {
-                val scale = keyframeCurrent(game.placeAnim, shrinkKeyframe)
-                r.save()
-                r.scale(scale, scale, boardCenterX, boardCenterY)
-            }
+        if (game.state == GameState.Countdown) {
+            countdownRender(game.countdown, gameBoardUi)
+        } else {
+            // next shape
+            game.nextShape?.let { nextShape ->
+                val nextShapeDock = uiGetNode(game.ui, "next_shape_dock")
 
-            r.drawRoundRect(
-                gameBoard.posX, gameBoard.posY,
-                gameBoard.width, gameBoard.height,
-                UI_RADIUS, Color.ink,
-            )
+                val dockX = nextShapeDock.posX
+                val dockY = nextShapeDock.posY
+                val dockWidth = nextShapeDock.width
+                val dockHeight = nextShapeDock.height
 
-            r.save()
-            r.translate(gameBoard.posX, gameBoard.posY)
+                val shapeRotation = getShapeRotation(nextShape.reference, 0)
 
-            if (game.state == GameState.Countdown) {
-                countdownRender(game.countdown)
-            }
-
-            // board cells
-            for (row in 0 until CELLS_COUNT) {
-                val layout = game.layout
-                val rowy = layout.boardPadding + row * layout.cellSize
-                for (col in 0 until CELLS_COUNT) {
-                    val x = layout.boardPadding + col * layout.cellSize
-                    var y = rowy
-
-                    val idx = coordsToIdx(col, row)
-                    val cell = game.board.cells[idx]
-
-                    if (cell.anim.running) {
-                        val currentOffset =
-                            animCurrent(cell.anim, 1f, 0f, ::lerp, AnimationEasing.EaseInSquared)
-                        y -= currentOffset * layout.cellSize
-                    }
-
-                    if (cell.filled) {
-                        r.drawRoundRect(
-                            x + layout.cellPadding, y + layout.cellPadding,
-                            layout.cellSize - layout.cellPadding * 2,
-                            layout.cellSize - layout.cellPadding * 2,
-                            layout.cellRadius,
-                            cell.color,
-                        )
-                    }
-                }
-            }
-
-            if (game.state is GameState.ClearingAnimation) {
-                boardRenderClearingAnimation(game.board, game.layout)
-            }
-
-            if (game.state == GameState.Placing) {
-                //  projection
-                val shape = game.currentShape
-                val layout = game.layout
-
-                if (shape.project && shape.initialized) {
-                    val color = if (shape.overlapping) {
-                        Color.addAlpha(200, Color.red)
-                    } else {
-                        shape.color
-                    }
-
-                    val currentProjectionCoords = currentShapeProjectionCoordsCurrent(shape)
-                    val s = getShapeRotation(shape.shape, shape.rotation)
-
-                    val leftCoords = currentProjectionCoords.x + s.minCol
-                    val topCoords = currentProjectionCoords.y + s.minRow
-
-                    val leftPos = layout.boardPadding + leftCoords * layout.cellSize
-                    val topPos = layout.boardPadding + topCoords * layout.cellSize
-
-                    val gridSize = SHAPE_CELLS_COUNT * layout.cellSize
-                    val shapeCenterX = leftPos + s.cols * layout.cellSize / 2f
-                    val shapeCenterY = topPos + s.rows * layout.cellSize / 2f
-
-                    if (shape.rotationAnim.running) {
-                        r.save()
-
-                        val currentOffset = animCurrent(
-                            shape.rotationAnim,
-                            shape.rotationCenterDiff,
-                            Vec2(0f, 0f),
-                            ::lerp,
-                            AnimationEasing.EaseOutSquared,
-                        )
-
-                        val currentOffsetX = currentOffset.x * layout.cellSize
-                        val currentOffsetY = currentOffset.y * layout.cellSize
-                        r.translate(currentOffsetX, currentOffsetY)
-
-                        val currentRotation = animCurrent(
-                            shape.rotationAnim,
-                            shape.rotationFrom,
-                            shape.rotationTo,
-                            ::lerp,
-                            AnimationEasing.EaseInSquared,
-                        )
-                        shape.rotationCurrent = currentRotation
-
-                        r.rotate(currentRotation, shapeCenterX, shapeCenterY)
-                    }
-
-                    for (offset in s.offsets) {
-                        val x = leftPos + (offset.col - s.minCol) * layout.cellSize
-                        val y = topPos + (offset.row - s.minRow) * layout.cellSize
-
-                        r.strokeRoundRect(
-                            x + layout.cellPadding, y + layout.cellPadding,
-                            layout.cellSize - layout.cellPadding * 2, layout.cellSize - layout.cellPadding * 2,
-                            layout.cellRadius,
-                            color,
-                            1f,
-                        )
-                    }
-
-                    if (shape.rotationAnim.running) {
-                        r.restore()
-                    }
-                }
-            }
-
-            r.restore()
-
-            if (game.state is GameState.PlacingAnimation) {
-                r.restore()
-            }
-
-            if (game.state == GameState.Announcer) {
-                announcerRender(game.announcer)
-            }
-        }
-
-        // next shape
-        game.nextShape?.let { nextShape ->
-            val nextShapeDock = uiGetNode(game.ui, "next_shape_dock")
-
-            val dockX = nextShapeDock.posX
-            val dockY = nextShapeDock.posY
-            val dockWidth = nextShapeDock.width
-            val dockHeight = nextShapeDock.height
-
-            val shapeRotation = getShapeRotation(nextShape.reference, 0)
-
-            val cellSize = minOf(
-                dockWidth / shapeRotation.cols,
-                dockHeight / shapeRotation.rows,
-                dockWidth / SHAPE_CELLS_COUNT,
-            )
-            val cellRadius = cellSize * CELL_RADIUS_FRACTION
-            val cellPadding = cellSize * 0.05f
-
-            val left = dockX + (dockWidth - shapeRotation.cols * cellSize) / 2f
-            val top = dockY + (dockHeight - shapeRotation.rows * cellSize) / 2f
-
-            for (offset in shapeRotation.offsets) {
-                val x = left + (offset.col - shapeRotation.minCol) * cellSize
-                val y = top + (offset.row - shapeRotation.minRow) * cellSize
-                r.drawRoundRect(
-                    x + cellPadding, y + cellPadding,
-                    cellSize - cellPadding * 2, cellSize - cellPadding * 2,
-                    cellRadius,
-                    nextShape.color,
+                val cellSize = minOf(
+                    dockWidth / shapeRotation.cols,
+                    dockHeight / shapeRotation.rows,
+                    dockWidth / SHAPE_CELLS_COUNT,
                 )
+                val cellRadius = cellSize * CELL_RADIUS_FRACTION
+                val cellPadding = cellSize * 0.05f
+
+                val left = dockX + (dockWidth - shapeRotation.cols * cellSize) / 2f
+                val top = dockY + (dockHeight - shapeRotation.rows * cellSize) / 2f
+
+                for (offset in shapeRotation.offsets) {
+                    val x = left + (offset.col - shapeRotation.minCol) * cellSize
+                    val y = top + (offset.row - shapeRotation.minRow) * cellSize
+                    cellRender(game.layout, x, y, cellSize, cellPadding, cellRadius, nextShape.color)
+                }
             }
-        }
-
-        // current shape
-        run {
-            val shapeDock = uiGetNode(game.ui, "current_shape")
-
-            val dockX = shapeDock.posX
-            val dockY = shapeDock.posY
-            val dockWidth = shapeDock.width
-            val dockHeight = shapeDock.height
 
             // current shape
-
-            val shape = game.currentShape
-            val layout = game.layout
-            val maxCellSize = 20f
-            val sr = getShapeRotation(shape.shape, shape.rotation)
-
-            if (shape.initialized) {
-                var left = 0f
-                var top = 0f
-
-                var totalShapeWidth = 0f
-                var totalShapeHeight = 0f
-
-                var cellSize = 0f
-                var cellPadding = 0f
-                var color = 0
-                var rotationPivot = Vec2(0f, 0f)
-
-                if (shape.inDock) {
-                    val dockPaddingHorizontal = dockWidth * 0.1f
-                    val dockPaddingVertical = dockHeight * 0.1f
-                    cellSize = minOf(
-                        (dockWidth - dockPaddingHorizontal * 2f) / sr.cols,
-                        (dockHeight - dockPaddingVertical * 2f) / sr.rows,
-                        maxCellSize,
-                    )
-                    cellPadding = cellSize * 0.05f
-                    val totalShapeWidth = sr.cols * cellSize
-                    val totalShapeHeight = sr.rows * cellSize
-
-                    left = dockX + (dockWidth - totalShapeWidth) / 2f
-                    top = dockY + (dockHeight - totalShapeHeight) / 2f
-
-                    rotationPivot.x = left + totalShapeWidth / 2f
-                    rotationPivot.y = top + totalShapeHeight / 2f
-
-                    color = shape.color
-                } else {
-                    cellSize = layout.cellSize
-                    cellPadding = layout.cellPadding
-
-                    val gridSize = SHAPE_CELLS_COUNT * cellSize
-
-                    // move x to center and y to bottom
-                    left = shape.dragPosition.x - (gridSize / 2f)
-                    top = shape.dragPosition.y - gridSize
-
-                    val totalShapeWidth = sr.cols * cellSize
-                    val totalShapeHeight = sr.rows * cellSize
-
-                    // center the shape within the grid
-                    left += (gridSize - totalShapeWidth) / 2f
-                    top += (gridSize - totalShapeHeight) / 2f
-
-                    rotationPivot.x = left + totalShapeWidth / 2f
-                    rotationPivot.y = top + totalShapeHeight / 2f
-
-                    color = if (shape.overlapping) {
-                        Color.addAlpha(200, Color.red)
-                    } else {
-                        shape.color
-                    }
-                }
-
-                if (shape.rotationAnim.running) {
-                    val currentRotation = animCurrent(
-                        shape.rotationAnim,
-                        shape.rotationFrom,
-                        shape.rotationTo,
-                        ::lerp,
-                        AnimationEasing.EaseInSquared,
-                    )
-                    shape.rotationCurrent = currentRotation
-
-                    r.save()
-                    r.rotate(currentRotation, rotationPivot.x, rotationPivot.y)
-                }
-
-                val cellRadius = cellSize * CELL_RADIUS_FRACTION
-
-                for (offset in sr.offsets) {
-                    val cellx = left + (offset.col - sr.minCol) * cellSize
-                    val celly = top + (offset.row - sr.minRow) * cellSize
-
-                    r.drawRoundRect(
-                        cellx + cellPadding,
-                        celly + cellPadding,
-                        cellSize - cellPadding * 2,
-                        cellSize - cellPadding * 2,
-                        cellRadius,
-                        color,
-                    )
-                }
-
-                if (shape.rotationAnim.running) {
-                    r.restore()
-                }
-            }
+            val shapeDockUi = uiGetNode(game.ui, "current_shape")
+            currentShapeRender(game.currentShape, shapeDockUi, gameBoardUi, game.layout, game.state)
         }
-    }
 
-    if (game.screenShakeAnim.running) {
-        r.restore()
+
+        if (game.state == GameState.Announcer) {
+            announcerRender(game.announcer)
+        }
     }
 
     r.restore()
