@@ -177,7 +177,7 @@ fun shapesBagInitShapes(
     shapes: Array<ShapeReference>,
     start: Int,
     end: Int,
-    shapesPlaced: Int,
+    phase: Int,
     random: Random = Random.Default,
 ) {
     // each bag consists of 10 shapes
@@ -198,8 +198,7 @@ fun shapesBagInitShapes(
     }
 
     when {
-        // first 2 bags
-        shapesPlaced < 20 -> {
+        phase < 2 -> {
             chooseShape(ShapeRole.Recovery)
             chooseShape(ShapeRole.Normal)
             chooseShape(ShapeRole.Recovery)
@@ -211,8 +210,8 @@ fun shapesBagInitShapes(
             chooseShape(ShapeRole.Recovery)
             chooseShape(ShapeRole.Normal)
         }
-        // second 2 bags
-        shapesPlaced < 40 -> {
+
+        phase < 3 -> {
             chooseShape(ShapeRole.Recovery)
             chooseShape(ShapeRole.Normal)
             chooseShape(ShapeRole.Normal)
@@ -224,8 +223,8 @@ fun shapesBagInitShapes(
             chooseShape(ShapeRole.Normal)
             chooseShape(ShapeRole.Recovery)
         }
-        // third 2 bags
-        shapesPlaced < 60 -> {
+
+        phase < 4 -> {
             chooseShape(ShapeRole.Recovery)
             chooseShape(ShapeRole.Normal)
             chooseShape(ShapeRole.Hard)
@@ -253,30 +252,11 @@ fun shapesBagInitShapes(
     }
 }
 
-fun shapesBagInitColors(colors: Array<Int>, start: Int, end: Int, shapesPlaced: Int) {
-    when {
-        shapesPlaced < 10 -> colors.fill(Color.lime, start, end)
-        shapesPlaced < 20 -> {
-            colors[start] = Color.lime
-            colors[start + 1] = Color.lime
-            colors[start + 2] = Color.yellow
-            colors[start + 3] = Color.yellow
-        }
-
-        shapesPlaced < 30 -> {
-            colors[start] = Color.lime
-            colors[start + 1] = Color.lime
-            colors[start + 2] = Color.yellow
-            colors[start + 3] = Color.blue
-        }
-
-        else -> {
-            colors[start] = Color.lime
-            colors[start + 1] = Color.purple
-            colors[start + 2] = Color.yellow
-            colors[start + 3] = Color.blue
-        }
-    }
+fun shapesBagInitColors(colors: Array<Int>, start: Int, end: Int) {
+    colors[start] = Color.lime
+    colors[start + 1] = Color.yellow
+    colors[start + 2] = Color.purple
+    colors[start + 3] = Color.blue
 
     for (i in end - 1 downTo start) {
         val j = Random.nextInt(start, i + 1)
@@ -291,9 +271,9 @@ data class Shape(
     val color: Int = 0,
 )
 
-fun shapesBagNext(bag: ShapesBag, shapesPlaced: Int): Shape {
-    val nextShape = bagNext(bag.shapes) { items, start, end -> shapesBagInitShapes(items, start, end, shapesPlaced) }
-    val nextColor = bagNext(bag.colors) { items, start, end -> shapesBagInitColors(items, start, end, shapesPlaced) }
+fun shapesBagNext(bag: ShapesBag, phase: Int): Shape {
+    val nextShape = bagNext(bag.shapes) { items, start, end -> shapesBagInitShapes(items, start, end, phase) }
+    val nextColor = bagNext(bag.colors) { items, start, end -> shapesBagInitColors(items, start, end) }
     return Shape(nextShape, nextColor)
 }
 

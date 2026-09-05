@@ -620,6 +620,7 @@ fun currentShapeRender(
 
 enum class LineClearPhase {
     None,
+    // Scheduled,
     PopGrow,
     PopShrink,
     FadeOut,
@@ -632,7 +633,7 @@ class LineClear(var row: Boolean) {
         const val LINE_SHRINKING_DURATION = 0.3f
 
         // max -> 12 cells, 11 * CELL_FADE_OUT_STAGGER = 0.55f
-        const val CELL_FADE_OUT_STAGGER = 0.05f
+        const val CELL_FADE_OUT_STAGGER = 0.03f
         const val CELL_FADE_OUT_DURATION = 0.3f
     }
 
@@ -649,6 +650,7 @@ class LineClear(var row: Boolean) {
     var popDelay = 0f
     var fadeOutDelay = 0f
     val cells = Array(CELLS_COUNT) { Cell() }
+    var filledLine = FilledLine(0, false)
 }
 
 fun lineClearSchedule(
@@ -656,12 +658,14 @@ fun lineClearSchedule(
     cellAnchor: Int,
     popDelay: Float,
     fadeOutDelay: Float,
+    filledLine: FilledLine,
 ) {
     lineClear.scheduled = true
     lineClear.phase = LineClearPhase.PopGrow
     lineClear.popDelay = popDelay
     lineClear.fadeOutDelay = fadeOutDelay
     lineClear.cellAnchor = cellAnchor
+    lineClear.filledLine = filledLine
 }
 
 fun lineClearBegin(lineClear: LineClear, elapsedTime: Float) {
@@ -848,28 +852,54 @@ fun lineClearRender(lineClear: LineClear, layout: Layout, lineCoord: Int, board:
     }
 }
 
+sealed interface Special {
+    data object None : Special
+    data class Blue(
+        var lastMovedAt: Int,
+        var locked: Boolean,
+        var canMove: Boolean,
+    ) : Special
+}
+
 class Cell(val idx: Int) {
     var color: Int = 0
     var filled: Boolean = false
     var filledAt = 0f
+
+    // blue special
+    // move down after each turn and become locked after being unable to move for 1 turn
+    // if the cell is unlocked and filled line contains at least one, it
+    // multiplies the score by 1.5
+    var special: Special = Special.None
+}
+
+fun cellClear(cell: Cell) {
+    cell.filled = false
+    cell.special = Special.None
 }
 
 class Board {
-    enum class State {
-        None,
-        Placing,
-        Clearing,
-    }
-
-    var state = State.None
     val cells = Array(CELLS_COUNT * CELLS_COUNT) { Cell(it) }
     val rowsClears = Array(CELLS_COUNT) { LineClear(true) }
     val colsClears = Array(CELLS_COUNT) { LineClear(false) }
     val placingAnim = Anim()
+    var specialsUpdated = false
+    val specialsAnim = Anim()
 }
 
-fun boardPlaceShape(board: Board, currentShape: CurrentShape, elapsedTime: Float): Int {
+fun boardPlaceShape(
+    board: Board,
+    currentShape: CurrentShape,
+    elapsedTime: Float,
+    phase: Int,
+    shapesPlaced: Int,
+): Int {
     var count = 0
+    val special = if (phase == 2 && currentShape.color == Color.blue) {
+        Special.Blue(shapesPlaced, false, false)
+    } else {
+        Special.None
+    }
 
     val shapeRotation = getShapeRotation(currentShape.shape, currentShape.rotation)
     for (offset in shapeRotation.offsets) {
@@ -880,86 +910,98 @@ fun boardPlaceShape(board: Board, currentShape: CurrentShape, elapsedTime: Float
         cell.filled = true
         cell.filledAt = elapsedTime
         cell.color = currentShape.color
+        cell.special = special
 
         count += 1
     }
 
     animBegin(board.placingAnim, 0.2f, elapsedTime)
-    board.state = Board.State.Placing
+    board.specialsUpdated = false
 
     return count
 }
 
-fun boardFindFilledLines(board: Board): Int {
-    // detect filled
+data class FilledLine (
+    val anchor: Int,
+    val containsUnlockedBlueSpecial: Boolean,
+)
 
-    val filledRows = IntArray(CELLS_COUNT) { -1 }
-    val filledCols = IntArray(CELLS_COUNT) { -1 }
+fun filledLineMultiplier(filledLine: FilledLine): Float {
+    if (filledLine.containsUnlockedBlueSpecial) {
+        return 1.5f
+    }
+    return 1f
+}
+
+fun filledLineScoreWithoutMultiplier(filledLine: FilledLine): Float {
+    return CELLS_COUNT * CELL_CLEAR_REWARD * filledLineMultiplier(filledLine)
+}
+
+data class BoardFindFilledLinesResult (
+    val filledRows: Array<FilledLine?>,
+    val filledCols: Array<FilledLine?>,
+    val lineCount: Int,
+)
+
+enum class LineDirection {
+    Row,
+    Col,
+}
+
+fun boardFindFilledLines(board: Board): BoardFindFilledLinesResult {
+    fun findFilledLines(filled: Array<FilledLine?>, dir: LineDirection): Int {
+        var count = 0
+
+        for (i in 0..<CELLS_COUNT) {
+            var anchor = -1
+            var containsUnlockedBlueSpecial = false
+            var prevFilledAt = -1f
+
+            for (j in 0..<CELLS_COUNT) {
+                val idx = if (dir == LineDirection.Row) {
+                    i * CELLS_COUNT + j
+                } else {
+                    j * CELLS_COUNT + i
+                }
+                val cell = board.cells[idx]
+
+                if (!cell.filled) {
+                    anchor = -1
+                    break
+                }
+
+                when (val special = cell.special) {
+                    is Special.Blue -> {
+                        containsUnlockedBlueSpecial = containsUnlockedBlueSpecial || !special.locked
+                    }
+                    else -> Unit
+                }
+
+                if (cell.filledAt > prevFilledAt) {
+                    anchor = j
+                    prevFilledAt = cell.filledAt
+                }
+            }
+
+            if (anchor > -1) {
+                filled[i] = FilledLine(
+                    anchor,
+                    containsUnlockedBlueSpecial,
+                )
+                count += 1
+            }
+        }
+
+        return count
+    }
+
+    val filledRows = Array<FilledLine?>(CELLS_COUNT) { null }
+    val filledCols = Array<FilledLine?>(CELLS_COUNT) { null }
     var linesCount = 0
 
-    for (row in 0..<CELLS_COUNT) {
-        var anchor = -1
-        var prevFilledAt = -1f
+    linesCount += findFilledLines(filledRows, LineDirection.Row)
+    linesCount += findFilledLines(filledCols, LineDirection.Col)
 
-        for (col in 0..<CELLS_COUNT) {
-            val idx = row * CELLS_COUNT + col
-            val cell = board.cells[idx]
-            if (!cell.filled) {
-                anchor = -1
-                break
-            }
-
-            if (cell.filledAt > prevFilledAt) {
-                anchor = col
-                prevFilledAt = cell.filledAt
-            }
-        }
-
-        if (anchor > -1) {
-            filledRows[row] = anchor
-            linesCount += 1
-        }
-    }
-
-    for (col in 0..<CELLS_COUNT) {
-        var anchor = -1
-        var prevFilledAt = -1f
-
-        for (row in 0..<CELLS_COUNT) {
-            val idx = row * CELLS_COUNT + col
-            val cell = board.cells[idx]
-            if (!cell.filled) {
-                anchor = -1
-                break
-            }
-
-            if (cell.filledAt > prevFilledAt) {
-                anchor = row
-                prevFilledAt = cell.filledAt
-            }
-        }
-
-        if (anchor > -1) {
-            filledCols[col] = anchor
-            linesCount += 1
-        }
-    }
-
-    // begin pop
-
-    // time for line pop
-    // DELAY (0.2) + GROW (0.1) + SHRINK (0.3)
-
-    fun fadeOutDelay(idx: Int): Float {
-        val delay = (linesCount - 1 - idx) * LineClear.LINE_POP_STAGGER
-        val stagger = idx * LineClear.LINE_POP_STAGGER
-        return delay + stagger
-    }
-
-    var rowIdx = 0
-
-    // rows
-    //
     // Pop:
     // 1st row = grow -> shrink
     // 2nd row = wait for 1st row to finish -> grow -> shrink
@@ -970,40 +1012,44 @@ fun boardFindFilledLines(board: Board): Int {
     // 2nd row = wait for 3rd row to finish shrink -> wait LINE_POP_STAGGER -> fade out
     // 3rd row = wait for 3rd row to finish shrink -> wait LINE_POP_STAGGER * 2 -> fade out
 
-    for ((row, anchorCol) in filledRows.withIndex()) {
-        if (anchorCol > -1) {
-            val popDelay = rowIdx * LineClear.LINE_POP_STAGGER
-            val fadeOutDelay = fadeOutDelay(rowIdx)
-            lineClearSchedule(board.rowsClears[row], anchorCol, popDelay, fadeOutDelay)
-            rowIdx += 1
+    // time for line pop
+    // DELAY (0.2) + GROW (0.1) + SHRINK (0.3)
+    fun fadeOutDelay(idx: Int): Float {
+        val delay = (linesCount - 1 - idx) * LineClear.LINE_POP_STAGGER
+        val stagger = idx * LineClear.LINE_POP_STAGGER
+        return delay + stagger
+    }
+
+    var lineIdx = 0
+    for ((row, rowLine) in filledRows.withIndex()) {
+        if (rowLine != null) {
+            val popDelay = lineIdx * LineClear.LINE_POP_STAGGER
+            val fadeOutDelay = fadeOutDelay(lineIdx)
+            lineClearSchedule(board.rowsClears[row], rowLine.anchor, popDelay, fadeOutDelay, rowLine)
+            lineIdx += 1
         }
     }
 
-    // cols
-    var colIdx = rowIdx
-
-    for ((col, anchorRow) in filledCols.withIndex()) {
-        if (anchorRow > -1) {
-            val popDelay = colIdx * LineClear.LINE_POP_STAGGER
-            val fadeOutDelay = fadeOutDelay(colIdx)
-            lineClearSchedule(board.colsClears[col], anchorRow, popDelay, fadeOutDelay)
-            colIdx += 1
+    for ((col, colLine) in filledCols.withIndex()) {
+        if (colLine != null) {
+            val popDelay = lineIdx * LineClear.LINE_POP_STAGGER
+            val fadeOutDelay = fadeOutDelay(lineIdx)
+            lineClearSchedule(board.colsClears[col], colLine.anchor, popDelay, fadeOutDelay, colLine)
+            lineIdx += 1
         }
     }
 
-    return linesCount
+    return BoardFindFilledLinesResult(filledRows, filledCols, linesCount)
 }
 
 fun boardClearLines(board: Board, elapsedTime: Float) {
-    board.state = Board.State.Clearing
-
     for (rowIndex in board.rowsClears.indices) {
         val row = board.rowsClears[rowIndex]
         if (row.scheduled) {
             lineClearBegin(row, elapsedTime)
             for (colIndex in 0..<CELLS_COUNT) {
                 val idx = coordsToIdx(colIndex, rowIndex)
-                board.cells[idx].filled = false
+                cellClear(board.cells[idx])
             }
         }
     }
@@ -1013,86 +1059,176 @@ fun boardClearLines(board: Board, elapsedTime: Float) {
             lineClearBegin(col, elapsedTime)
             for (rowIndex in 0..<CELLS_COUNT) {
                 val idx = coordsToIdx(colIndex, rowIndex)
-                board.cells[idx].filled = false
+                cellClear(board.cells[idx])
             }
         }
     }
 }
 
-sealed interface BoardUpdateResult {
-    data object None : BoardUpdateResult
-    data class Placing(val linesFilled: Int) : BoardUpdateResult
-    data class Clearing(
-        var allDone: Boolean,
-        var linePopped: Boolean,
-        var cellsFadedOut: Int,
-    ) : BoardUpdateResult
-}
+fun boardUpdateSpecials(board: Board, shapesPlaced: Int, elapsedTime: Float): Boolean {
+    board.specialsUpdated = true
+    var beginAnim = false
 
-fun boardUpdate(board: Board, elapsedTime: Float): BoardUpdateResult {
-    return when (board.state) {
-        Board.State.Placing -> {
-            animUpdate(board.placingAnim, elapsedTime)
+    for (col in 0..<CELLS_COUNT) {
+        var canMove = false
 
-            val placingAnimDone = !board.placingAnim.running
-            if (placingAnimDone) {
-                board.state = Board.State.None
-                val linesCleared = boardFindFilledLines(board)
-                BoardUpdateResult.Placing(linesCleared)
+        for (row in CELLS_COUNT - 1 downTo 0) {
+            val idx = coordsToIdx(col, row)
+            val cell = board.cells[idx]
+
+            if (!cell.filled) {
+                canMove = true
             } else {
-                BoardUpdateResult.None
+                when (val special = cell.special) {
+                    is Special.Blue -> {
+                        if (special.lastMovedAt == shapesPlaced - 1) {
+                            if (!canMove) {
+                                special.canMove = false
+                            } else {
+                                beginAnim = true
+
+                                val underCell = board.cells[idx + CELLS_COUNT]
+                                underCell.filled = true
+                                underCell.filledAt = cell.filledAt
+                                underCell.color = cell.color
+                                underCell.special = Special.Blue(shapesPlaced, false, true)
+
+                                cellClear(cell)
+                            }
+                        } else if (special.lastMovedAt < shapesPlaced - 1) {
+                            special.locked = true
+                            special.canMove = false
+                        }
+                    }
+
+                    else -> canMove = false
+                }
+            }
+        }
+    }
+
+    if (beginAnim) {
+        animBegin(board.specialsAnim, 0.2f, elapsedTime)
+    }
+
+    return beginAnim
+}
+
+fun gameFindFilledLines(game: GameContext) {
+    val result = boardFindFilledLines(game.board)
+
+    if (result.lineCount == 0) {
+        if (game.noClearStreak >= 3 && game.comboMultiplier > 1) {
+            game.comboMultiplier -= 1
+            game.comboMultiplierVisual -= 1
+
+            game.comboMultiplierIncreased = false
+            animBegin(game.comboMultiplierAnim, 0.2f, game.elapsedTime)
+        }
+
+        if (game.noClearStreak >= 3 && game.clearStreak > 0) {
+            game.clearStreak = 0
+            game.clearStreakMultiplierIncreased = false
+            animBegin(game.clearStreakMultiplierAnim, 0.2f, game.elapsedTime)
+        }
+
+        game.noClearStreak += 1
+
+        var beginSpecialsAnim = false
+        if (!game.board.specialsUpdated) {
+            beginSpecialsAnim = boardUpdateSpecials(game.board, game.shapesPlaced, game.elapsedTime)
+        }
+
+        if (beginSpecialsAnim) {
+            game.state = GameState.AnimatingSpecials
+        } else {
+            game.state = GameState.Placing
+        }
+    } else {
+        val linesFilled = result.lineCount
+
+        game.linesFilled += linesFilled
+        val newPhase = game.linesFilled / 10
+        if (newPhase != game.phase) {
+            game.phaseShapesPlaced = 0
+            game.phase = newPhase
+        }
+
+        // multiplier
+        if (linesFilled > 1) {
+            game.comboMultiplier += linesFilled
+            game.queuedComboMultiplierUpdates += linesFilled
+        }
+
+        // streak
+        game.noClearStreak = 0
+        game.clearStreak += 1
+        game.clearStreakMultiplierIncreased = true
+        if (linesFilled == 1 && game.clearStreak > 1) {
+            game.queuedClearStreakMultiplierUpdates += 1
+        }
+
+        // score
+
+        var totalMultiplier = game.comboMultiplier
+        if (game.clearStreak > 0) {
+            totalMultiplier *= game.clearStreak
+        }
+
+        var totalScoreForLines = 0f
+        for (filledRow in result.filledRows) {
+            if (filledRow != null) {
+                totalScoreForLines += filledLineScoreWithoutMultiplier(filledRow)
+            }
+        }
+        for (filledCol in result.filledCols) {
+            if (filledCol != null) {
+                totalScoreForLines += filledLineScoreWithoutMultiplier(filledCol)
             }
         }
 
-        Board.State.Clearing -> {
-            val result = BoardUpdateResult.Clearing(
-                allDone = true,
-                linePopped = false,
-                cellsFadedOut = 0,
-            )
+        game.score += (totalScoreForLines * totalMultiplier).toInt()
 
-            for (row in board.rowsClears) {
-                if (row.phase != LineClearPhase.None) {
-                    val lineResult = lineClearUpdate(row, elapsedTime)
-                    if (!result.linePopped) {
-                        result.linePopped = lineResult.popped
-                    }
-                    if (lineResult.cellsFadedOut > 0) {
-                        result.cellsFadedOut += lineResult.cellsFadedOut
-                    }
-                    if (row.phase != LineClearPhase.None) {
-                        result.allDone = false
-                    }
-                }
-            }
-
-            for (col in board.colsClears) {
-                if (col.phase != LineClearPhase.None) {
-                    val lineResult = lineClearUpdate(col, elapsedTime)
-                    if (!result.linePopped) {
-                        result.linePopped = lineResult.popped
-                    }
-                    if (lineResult.cellsFadedOut > 0) {
-                        result.cellsFadedOut += lineResult.cellsFadedOut
-                    }
-                    if (col.phase != LineClearPhase.None) {
-                        result.allDone = false
-                    }
-                }
-            }
-
-            if (result.allDone) {
-                board.state = Board.State.None
-            }
-
-            result
+        if (linesFilled > 1) {
+            game.state = GameState.Announcer
+            announcerAnnounce(game.announcer, linesFilled, game.elapsedTime)
+        } else {
+            game.state = GameState.AnimatingBoardClearing
+            boardClearLines(game.board, game.elapsedTime)
         }
-
-        Board.State.None -> BoardUpdateResult.None
     }
 }
 
-fun boardRender(board: Board, gameBoardUi: Container, layout: Layout) {
+fun boardUpdateClearingAnimation(lines: Array<LineClear>, elapsedTime: Float): Triple<Boolean, FilledLine?, Float> {
+    var rdone = true
+    var rline: FilledLine? = null
+    var scoreReward = 0f
+
+    for (line in lines) {
+        if (line.phase != LineClearPhase.None) {
+            val lineResult = lineClearUpdate(line, elapsedTime)
+            if (rline == null && lineResult.popped) {
+                rline = line.filledLine
+            }
+            if (lineResult.cellsFadedOut > 0) {
+                val mult = filledLineMultiplier(line.filledLine)
+                scoreReward += lineResult.cellsFadedOut * CELL_CLEAR_REWARD * mult
+            }
+            if (line.phase != LineClearPhase.None) {
+                rdone = false
+            }
+        }
+    }
+
+    return Triple(rdone, rline, scoreReward)
+}
+
+fun boardRender(
+    board: Board,
+    gameBoardUi: Container,
+    layout: Layout,
+    gameState: GameState,
+) {
     val r = Platform.renderer
     r.save()
 
@@ -1117,6 +1253,12 @@ fun boardRender(board: Board, gameBoardUi: Container, layout: Layout) {
     r.translate(gameBoardUi.posX, gameBoardUi.posY)
 
     // board cells
+    var blueSpecialOffsetY = 0f
+    if (gameState == GameState.AnimatingSpecials) {
+        blueSpecialOffsetY = animCurrent(board.specialsAnim, 1f, 0f, ::lerp, AnimationEasing.EaseOutSquared)
+        blueSpecialOffsetY *= layout.cellSize
+    }
+
     for (row in 0 until CELLS_COUNT) {
         val layout = layout
         val rowy = layout.boardPadding + row * layout.cellSize
@@ -1127,13 +1269,23 @@ fun boardRender(board: Board, gameBoardUi: Container, layout: Layout) {
             val idx = coordsToIdx(col, row)
             val cell = board.cells[idx]
 
+            when (val special = cell.special) {
+                is Special.Blue -> {
+                    if (special.canMove && !special.locked) {
+                        y -= blueSpecialOffsetY
+                    }
+                }
+
+                is Special.None -> Unit
+            }
+
             if (cell.filled) {
                 cellRender(layout, x, y, color = cell.color)
             }
         }
     }
 
-    if (board.state == Board.State.Clearing) {
+    if (gameState == GameState.AnimatingBoardClearing) {
         for (row in 0..<CELLS_COUNT) {
             val rowLine = board.rowsClears[row]
             if (rowLine.phase != LineClearPhase.None) {
@@ -1326,7 +1478,9 @@ fun coordsToPos(layout: Layout, coords: Vec2): Vec2 {
 sealed interface GameState {
     data object Countdown : GameState
     data object Placing : GameState
-    data object Board : GameState
+    data object AnimatingPlacement: GameState
+    data object AnimatingBoardClearing  : GameState
+    data object AnimatingSpecials : GameState
     data object Announcer : GameState
 }
 
@@ -1362,6 +1516,8 @@ class GameContext {
     val announcer = Announcer()
 
     var shapesPlaced = 0
+    var phaseShapesPlaced = 0
+    var linesFilled = 0
     var phase = 0
 
     var roundDuration = 0f
@@ -1418,7 +1574,13 @@ fun gamePlaceShape(game: GameContext, forced: Boolean) {
         }
     }
 
-    var cellCount = boardPlaceShape(game.board, game.currentShape, game.elapsedTime)
+    var cellCount = boardPlaceShape(
+        game.board,
+        game.currentShape,
+        game.elapsedTime,
+        game.phase,
+        game.shapesPlaced,
+    )
     val scoreChange = if (forcedPlacement) {
         cellCount * -10
     } else {
@@ -1431,26 +1593,37 @@ fun gamePlaceShape(game: GameContext, forced: Boolean) {
 
     game.currentShape.initialized = false
 
+    game.phaseShapesPlaced += 1
     game.shapesPlaced += 1
-    game.phase = game.shapesPlaced / 10
     game.roundEnd = game.elapsedTime
+
+    game.state = GameState.AnimatingPlacement
 }
 
 fun coordsToIdx(col: Int, row: Int): Int {
     return col + row * CELLS_COUNT
 }
 
-fun currentRoundDuration(shapesPlaced: Int): Float {
-    val startingSeconds = 10f
-    val minimumSeconds = 3f
-    val warmupShapes = 10
-    val halfLifeShapes = 50f
+fun currentRoundDuration(phase: Int, phaseShapesPlaced: Int): Float {
+    val startingSeconds = when (phase) {
+        0 -> return 10f
+        1 -> 9f
+        2 -> 8f
+        3 -> 7f
+        4 -> 6f
+        else -> 5f
+    }
 
-    val shapesIntoDifficulty = kotlin.math.max(0, shapesPlaced - warmupShapes)
+    // minS + (startS - minS) * (1 / 2) ^ (phaseShapesPlaced / halvingShapesCount)
+    // startS - minS => variable duration
+
+    val minimumSeconds = 3f
+    // at this amount of shapes, the variable duration halves
+    val halvingShapesCount = 30f
 
     return minimumSeconds +
             (startingSeconds - minimumSeconds) *
-            0.5f.pow(shapesIntoDifficulty / halfLifeShapes)
+            0.5f.pow(phaseShapesPlaced / halvingShapesCount)
 }
 
 fun gameQueueResize(game: GameContext, newWidth: Float, newHeight: Float) {
@@ -1508,7 +1681,6 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
                 if (uiButtonReleased(game.ui, "button_place")) {
                     if (!currentShape.overlapping) {
                         gamePlaceShape(game, false)
-                        game.state = GameState.Board
                         placed = true
                     }
                 }
@@ -1596,7 +1768,7 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
         if (game.state == GameState.Placing) {
             if (!game.currentShape.initialized) {
                 val (gameOver, newShape) = currentShapeSpawn(
-                    shapesBagNext(game.shapesBag, game.shapesPlaced),
+                    shapesBagNext(game.shapesBag, game.phase),
                     game.board,
                     game.elapsedTime
                 )
@@ -1609,9 +1781,10 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
 
                 game.currentShape = newShape
 
-                game.roundDuration = currentRoundDuration(game.shapesPlaced)
+                game.roundDuration = currentRoundDuration(game.phase, game.phaseShapesPlaced)
                 game.nextShape = shapesBagPeek(game.shapesBag)
             } else {
+                // forced placement
                 if (game.roundStart + game.roundDuration < game.elapsedTime) {
                     gamePlaceShape(game, true)
                 }
@@ -1624,93 +1797,78 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
         // ----------
         // board upate
 
-        when (val r = boardUpdate(game.board, game.elapsedTime)) {
-            is BoardUpdateResult.None -> Unit
+        when (val gs = game.state) {
+            is GameState.AnimatingPlacement -> run {
+                val board = game.board
 
-            is BoardUpdateResult.Placing -> {
-                val linesCleared = r.linesFilled
-
-                if (linesCleared > 0) {
-                    game.noClearStreak = 0
-
-                    if (linesCleared > 1) {
-                        game.comboMultiplier += linesCleared
-                        game.queuedComboMultiplierUpdates += linesCleared
-                    }
-
-                    game.clearStreak += 1
-                    game.clearStreakMultiplierIncreased = true
-
-                    if (linesCleared == 1 && game.clearStreak > 1) {
-                        game.queuedClearStreakMultiplierUpdates += 1
-                    }
-
-                    var totalMultiplier = game.comboMultiplier
-                    if (game.clearStreak > 0) {
-                        totalMultiplier *= game.clearStreak
-                    }
-
-                    val scoreUpdates = linesCleared * CELLS_COUNT
-                    val scoreChange = scoreUpdates * CELL_CLEAR_REWARD * totalMultiplier
-                    game.score += scoreChange
-
-                    if (linesCleared > 1) {
-                        game.state = GameState.Announcer
-                        announcerAnnounce(game.announcer, linesCleared, game.elapsedTime)
-                    } else {
-                        boardClearLines(game.board, game.elapsedTime)
-                    }
-                } else {
-                    if (game.noClearStreak >= 5 && game.comboMultiplier > 1) {
-                        game.comboMultiplier -= 1
-                        game.comboMultiplierVisual -= 1
-
-                        game.comboMultiplierIncreased = false
-                        animBegin(game.comboMultiplierAnim, 0.2f, game.elapsedTime)
-                    }
-
-                    if (game.noClearStreak >= 3 && game.clearStreak > 0) {
-                        game.clearStreak = 0
-                        game.clearStreakMultiplierIncreased = false
-                        animBegin(game.clearStreakMultiplierAnim, 0.2f, game.elapsedTime)
-                    }
-
-                    game.noClearStreak += 1
-                    game.state = GameState.Placing
+                animUpdate(board.placingAnim, game.elapsedTime)
+                val done = !board.placingAnim.running
+                if (!done) {
+                    return@run
                 }
+
+                gameFindFilledLines(game)
             }
 
-            is BoardUpdateResult.Clearing -> {
-                if (r.linePopped && game.queuedComboMultiplierUpdates > 0) {
-                    game.queuedComboMultiplierUpdates -= 1
-                    game.comboMultiplierVisual += 1
-                    game.comboMultiplierIncreased = true
-                    animBegin(game.comboMultiplierAnim, 0.2f, game.elapsedTime)
-                    animBegin(game.screenShakeAnim, 0.1f, game.elapsedTime)
-                }
+            is GameState.AnimatingBoardClearing -> run {
+                val board = game.board
+                val (rowsDone, rowPopped, rowScoreReward) = boardUpdateClearingAnimation(board.rowsClears, game.elapsedTime)
+                val (colsDone, colPopped, colScoreReward) = boardUpdateClearingAnimation(board.colsClears, game.elapsedTime)
 
-                if (r.linePopped && game.queuedClearStreakMultiplierUpdates > 0) {
-                    game.queuedClearStreakMultiplierUpdates -= 1
-                    animBegin(game.clearStreakMultiplierAnim, 0.2f, game.elapsedTime)
-                    if (!game.screenShakeAnim.running) {
+                // line pops are sequential so only one can be non null
+                var linePopped = rowPopped ?: colPopped
+                if (linePopped != null) {
+                    // combo
+                    if (game.queuedComboMultiplierUpdates > 0) {
+                        game.queuedComboMultiplierUpdates -= 1
+                        game.comboMultiplierVisual += 1
+                        game.comboMultiplierIncreased = true
+                        animBegin(game.comboMultiplierAnim, 0.2f, game.elapsedTime)
                         animBegin(game.screenShakeAnim, 0.1f, game.elapsedTime)
                     }
+
+                    // clear
+                    if (game.queuedClearStreakMultiplierUpdates > 0) {
+                        game.queuedClearStreakMultiplierUpdates -= 1
+                        animBegin(game.clearStreakMultiplierAnim, 0.2f, game.elapsedTime)
+                        if (!game.screenShakeAnim.running) {
+                            animBegin(game.screenShakeAnim, 0.1f, game.elapsedTime)
+                        }
+                    }
                 }
 
-                if (r.cellsFadedOut > 0) {
+                var totalScoreReward = rowScoreReward + colScoreReward
+                if (totalScoreReward > 0f) {
                     var totalMultiplier = game.comboMultiplier
                     if (game.clearStreak > 0) {
                         totalMultiplier *= game.clearStreak
                     }
-
-                    val totalChange = r.cellsFadedOut * CELL_CLEAR_REWARD * totalMultiplier
-                    gameAnimateScore(game, totalChange)
+                    totalScoreReward *= totalMultiplier
+                    gameAnimateScore(game, totalScoreReward.toInt())
                 }
 
-                if (r.allDone) {
-                    game.state = GameState.Placing
+                if (rowsDone && colsDone) {
+                    var nextState: GameState = GameState.Placing
+                    if (!game.board.specialsUpdated) {
+                        val beginAnim = boardUpdateSpecials(game.board, game.shapesPlaced, game.elapsedTime)
+                        if (beginAnim) {
+                            nextState = GameState.AnimatingSpecials
+                        }
+                    }
+                    game.state = nextState
                 }
             }
+
+            is GameState.AnimatingSpecials -> {
+                val board = game.board
+                animUpdate(board.specialsAnim, game.elapsedTime)
+                val done = !board.specialsAnim.running
+                if (done) {
+                    gameFindFilledLines(game)
+                }
+            }
+
+            else -> Unit
         }
 
         // announcer
@@ -1728,7 +1886,7 @@ fun gameUpdate(game: GameContext, dt: Float, touch: Touch) {
             )
             if (done) {
                 boardClearLines(game.board, game.elapsedTime)
-                game.state = GameState.Board
+                game.state = GameState.AnimatingBoardClearing
             }
         }
 
@@ -1772,7 +1930,7 @@ fun gameRender(game: GameContext) {
 
     if (game.screen == GameScreen.Playing) {
         val gameBoardUi = uiGetNode(game.ui, "game_board")
-        boardRender(game.board, gameBoardUi, game.layout)
+        boardRender(game.board, gameBoardUi, game.layout, game.state)
 
         if (game.state == GameState.Countdown) {
             countdownRender(game.countdown, gameBoardUi)
